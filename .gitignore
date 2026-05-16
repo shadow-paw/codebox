@@ -1,0 +1,67 @@
+# Claude
+.claude/settings.local.json
+
+# Build artefacts
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go test & coverage output
+*.test
+*.out
+coverage.txt
+coverage.html
+coverage.xml
+profile.cov
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Vendor (uncomment if vendoring)
+# /vendor/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.env
+*.envrc
+.envrc
+
+# Credentials & keys
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+secrets.yml
+secrets.yaml
+secrets.json
+credentials
+credentials.*
+.aws/
+.gcp/
+gha-creds-*.json
+service-account*.json
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,23 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"files.exclude": {
+			".claude/": true,
+			".vs/": true,
+			".vscode/": true,
+			"*.code-workspace": true,
+			"*.csproj": true,
+			"bin/": true
+		},
+		"editor.rulers": [
+			120
+		],
+		"files.trimFinalNewlines": true,
+		"files.trimTrailingWhitespace": true,
+		"files.eol": "\n"
+	}
+}
