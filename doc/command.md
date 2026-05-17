@@ -332,9 +332,39 @@ Engine stdout (which otherwise echoes the container/image name) is
 captured to internal buffers throughout — only the human-readable
 progress lines codebox prints reach the operator's terminal.
 
+## `list` enumeration
+
+`list` is fully wired today. The use-case layer runs
+
+```
+<engine> ps -a --filter label=codebox=true \
+  --format '{{.Names}}|{{.CreatedAt}}|{{.Ports}}'
+```
+
+against the chosen target (locally or via ssh on `--remote`) and
+prints a three-column table to stdout:
+
+| Column        | Source                                                  |
+| ------------- | ------------------------------------------------------- |
+| `INSTANCE`    | `{{.Names}}` |
+| `AGE`         | `time.Now() − {{.CreatedAt}}`, rendered in the largest non-zero unit (`<1 min`, `N min`, `N hr`, `N day`). Unparseable timestamps render as `?`. |
+| `SSH COMMAND` | Copy-paste shell hint targeting the container's sshd. |
+
+The `SSH COMMAND` column hard-codes the in-container login (`user`)
+and sshd port (`2222`). Stopped containers have no published port and
+surface `(stopped)` in place of an unusable hint. Otherwise:
+
+- **Local**:
+  `ssh -o StrictHostKeyChecking=no user@localhost -p <host_port>`
+- **Remote** (`--remote=ops@bastion`):
+  `ssh -o StrictHostKeyChecking=no -J ops@bastion user@localhost -p <host_port>`
+
+When no codebox containers are present, the single line
+`No codebox instances found.` is printed and the command exits `0`.
+
 ## Status
 
-`create` and `delete` are implemented end-to-end. `list`, `shell`,
+`create`, `delete`, and `list` are implemented end-to-end. `shell`,
 `run`, `pull`, `push` are wired up to the cobra parser but their
 action layer is still a no-op: they accept and validate flags, then
 return success without performing any orchestrator, SSH, or

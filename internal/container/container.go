@@ -42,6 +42,14 @@ func (e *Engine) ListRunningNames() string {
 	return e.bin + " ps --format '{{.Names}}'"
 }
 
+// ListCodeboxInstances is the shell command that lists every container
+// codebox manages (those carrying the `codebox=true` label), one per
+// line. The format is `<name>|<createdAt>|<ports>` so the use-case
+// layer can parse it without splitting on engine-specific whitespace.
+func (e *Engine) ListCodeboxInstances() string {
+	return e.bin + ` ps -a --filter label=codebox=true --format '{{.Names}}|{{.CreatedAt}}|{{.Ports}}'`
+}
+
 // Stop returns the shell command that stops a running container.
 func (e *Engine) Stop(instance string) string {
 	return fmt.Sprintf("%s stop %s", e.bin, shquote(instance))

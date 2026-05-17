@@ -124,6 +124,16 @@ func TestRemove_QuotesInstanceName(t *testing.T) {
 	}
 }
 
+func TestListCodeboxInstances_FormatIsParseable(t *testing.T) {
+	t.Parallel()
+	e, _ := container.New("podman")
+	got := e.ListCodeboxInstances()
+	want := `podman ps -a --filter label=codebox=true --format '{{.Names}}|{{.CreatedAt}}|{{.Ports}}'`
+	if got != want {
+		t.Fatalf("ListCodeboxInstances = %q, want %q", got, want)
+	}
+}
+
 func TestUntag_QuotesInstanceName(t *testing.T) {
 	t.Parallel()
 	e, _ := container.New("podman")

@@ -80,7 +80,6 @@ func TestSubcommands_ParseAsStubs(t *testing.T) {
 	t.Parallel()
 
 	cases := [][]string{
-		{"list", "--orchestrator=podman"},
 		{
 			"shell", "demo",
 			"--orchestrator=podman", "--remote=u@h", "--instance-key=k",
