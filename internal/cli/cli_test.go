@@ -216,66 +216,9 @@ func TestCreate_FlagOrderMatchesSpec(t *testing.T) {
 	}
 }
 
-// TestCreate_PrintsDockerfile_ExplicitKey covers the happy path: an
-// explicit --instance-key resolves to its sibling .pub, and the
-// rendered Dockerfile is emitted to stdout after the banner.
-func TestCreate_PrintsDockerfile_ExplicitKey(t *testing.T) {
-	home := withFakeHome(t)
-	const pub = "ssh-ed25519 AAAAEXPLICITKEY operator@host"
-	writePub(t, home, "id_ed25519.pub", pub+"\n")
-
-	var so, se bytes.Buffer
-	args := []string{
-		"create", "demo",
-		"--orchestrator=podman",
-		"--os=debian_13",
-		"--instance-key=~/.ssh/id_ed25519",
-	}
-	if code := cli.Run(context.Background(), args, &so, &se); code != 0 {
-		t.Fatalf("exit = %d, want 0\nstderr=%s", code, se.String())
-	}
-
-	out := so.String()
-	wants := []string{
-		"# syntax=docker/dockerfile:1.7",
-		"FROM docker.io/debian:13.4",
-		"apt-get install -y --no-install-recommends",
-		"useradd -m -s /bin/bash user",
-		"usermod -p '*NP' user",
-		"/etc/ssh/sshd_config.d/10-codebox.conf",
-		"EXPOSE 2222",
-		pub,
-	}
-	for _, w := range wants {
-		if !strings.Contains(out, w) {
-			t.Errorf("create output missing %q", w)
-		}
-	}
-}
-
-// TestCreate_AutoDetectsSingleKey covers the auto-detection branch:
-// with --instance-key omitted and exactly one *.pub in ~/.ssh, that
-// key is embedded.
-func TestCreate_AutoDetectsSingleKey(t *testing.T) {
-	home := withFakeHome(t)
-	const pub = "ssh-ed25519 AAAAAUTOKEY operator@host"
-	writePub(t, home, "id_ed25519.pub", pub+"\n")
-
-	var so, se bytes.Buffer
-	if code := cli.Run(context.Background(),
-		[]string{"create", "demo", "--os=ubuntu_24"}, &so, &se); code != 0 {
-		t.Fatalf("exit = %d, want 0\nstderr=%s", code, se.String())
-	}
-	if !strings.Contains(so.String(), pub) {
-		t.Fatalf("auto-detected key not embedded in output:\n%s", so.String())
-	}
-	if !strings.Contains(so.String(), "FROM docker.io/ubuntu:24.04") {
-		t.Fatalf("ubuntu_24 base image missing")
-	}
-}
-
 // TestCreate_AutoDetectAmbiguous covers the failure path: zero or
-// multiple .pub files in ~/.ssh must surface a helpful error.
+// multiple .pub files in ~/.ssh must surface a helpful error before
+// any orchestrator command is attempted.
 func TestCreate_AutoDetectAmbiguous(t *testing.T) {
 	home := withFakeHome(t)
 	writePub(t, home, "id_rsa.pub", "ssh-rsa AAAA one")

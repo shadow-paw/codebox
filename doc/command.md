@@ -189,13 +189,77 @@ codebox push demo \
 | `--local-path`    | path   | *(unset)* | File or directory on the local machine to copy from. |
 | `--instance-path` | path   | *(unset)* | Directory on the instance to copy into. |
 
-## `create` Dockerfile rendering
+## `create` provisioning
 
-`create` is the only command with a partial implementation today. It
-**generates** the Dockerfile for the requested instance and **prints it
-to stdout**; no image is built and no container is started. The output is
-the contract used by callers (and by tests) while the action layer is
-filled in.
+`create` is fully wired today: it builds the image and starts the
+container. The generated Dockerfile is printed to stdout, bracketed
+by a labelled horizontal rule and a matching closing rule, so
+operators can audit exactly what they are about to provision; the
+engine's build progress, the success line, and the shell hint follow.
+
+### Instance name
+
+The positional `INSTANCE` argument must match `^[A-Za-z0-9_-]{1,32}$`:
+
+- non-empty,
+- at most 32 characters,
+- characters from `A-Z`, `a-z`, `0-9`, `_`, `-`.
+
+Codebox uses the instance name verbatim as the container name and the
+image tag, so the cap stays comfortably inside engine-specific limits
+while leaving room for descriptive suffixes (`project-feature-sha`).
+Invalid names fail fast — no orchestrator command is issued.
+
+### Flow
+
+For each invocation the use-case layer performs, in order:
+
+1. **Pre-existence check.** `<engine> ps -a --format '{{.Names}}'` is
+   run (locally or via ssh). If a container with the requested name
+   already exists, the command fails with a hint:
+
+   ```
+   Error: instance "demo" already exists; stop and delete it first:
+     codebox delete demo
+   ```
+
+   The `--orchestrator` and `--remote` flags are echoed back in the
+   hint when they differ from the defaults.
+
+2. **Image build.** A Dockerfile is generated in memory and piped to
+   `<engine> build -t INSTANCE -f -` whose context is a fresh
+   `mktemp -d` directory (trapped for cleanup on exit). The empty
+   context guarantees no files from the operator's working tree leak
+   into the image. `--rebuild` adds `--no-cache`. Build output is
+   streamed to the operator's terminal as it is produced.
+
+3. **Container start.** `<engine> run -d --name INSTANCE --hostname
+   INSTANCE --label codebox=true --publish-all INSTANCE`. The hostname
+   is set so an interactive shell inside the container makes the
+   sandbox immediately identifiable. Failures surface the engine's
+   stderr verbatim.
+
+4. **Success line.** A copy-paste-ready `codebox shell` command is
+   printed on the line after a one-line success message, indented by
+   two spaces. `--orchestrator`, `--remote`, and `--ssh-key` are
+   included only when the operator supplied a non-default value:
+
+   ```
+   Instance "demo" is ready. Open a shell:
+     codebox shell demo --remote=user@host --ssh-key=~/.ssh/id_rsa
+   ```
+
+### Transport
+
+When `--remote=user@host` is set, each step's shell command is sent via
+`ssh user@host '<command>'`. The operator's normal SSH configuration
+(`~/.ssh/config`, ssh-agent, default keys) is used; the
+`--instance-key` value is **not** passed to ssh — it is only embedded
+into the container's `authorized_keys`. SSH connection failures (exit
+status 255) surface as a distinct error message naming the host, so
+the operator can tell them apart from build or run failures.
+
+## Dockerfile rendering
 
 ### Base images
 
@@ -248,8 +312,9 @@ later layer does not invalidate the package install cache:
 
 ## Status
 
-All other commands listed here are wired up to the cobra parser but
-their action layer is still a no-op. They accept and validate flags,
-then return success without performing any orchestrator, SSH, or
-file-transfer work. The behaviours described above are the
-**specification** that future implementation work is held against.
+`create` is implemented end-to-end. `delete`, `list`, `shell`, `run`,
+`pull`, `push` are wired up to the cobra parser but their action layer
+is still a no-op: they accept and validate flags, then return success
+without performing any orchestrator, SSH, or file-transfer work. The
+behaviours described above are the **specification** that future
+implementation work is held against.
