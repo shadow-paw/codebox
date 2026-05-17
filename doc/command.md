@@ -241,12 +241,12 @@ For each invocation the use-case layer performs, in order:
 
 4. **Success line.** A copy-paste-ready `codebox shell` command is
    printed on the line after a one-line success message, indented by
-   two spaces. `--orchestrator`, `--remote`, and `--ssh-key` are
+   two spaces. `--orchestrator`, `--remote`, and `--instance-key` are
    included only when the operator supplied a non-default value:
 
    ```
    Instance "demo" is ready. Open a shell:
-     codebox shell demo --remote=user@host --ssh-key=~/.ssh/id_rsa
+     codebox shell demo --remote=user@host --instance-key=~/.ssh/id_rsa
    ```
 
 ### Transport
@@ -425,11 +425,53 @@ ssh failures (exit status 255) surface as a distinct error naming the
 host so they can be told apart from a non-zero exit from the inner
 command.
 
+## `push` and `pull` file transfer
+
+`push` and `pull` share an implementation: each builds an rsync
+command tunnelled over ssh and runs it locally so rsync's progress
+stream reaches the operator's terminal directly. The use-case layer
+performs, in order:
+
+1. **Existence check.** `<engine> ps -a --format '{{.Names}}'` is run
+   against `--remote` (locally if unset). When the instance is missing,
+   the command fails with `instance "NAME" not found` and exits
+   non-zero before any further work.
+2. **Host port lookup.** `<engine> port NAME 2222` is run on the same
+   target; the first `<addr>:<port>` line is parsed and the numeric
+   port retained. A stopped container produces no mapping and surfaces
+   `instance "NAME" is not exposing port 2222; is it running?`.
+3. **Rsync command echo.** The rsync invocation is printed to stdout
+   bracketed by horizontal rules, mirroring the Dockerfile block
+   `create` emits during provisioning, so the operator can audit the
+   exact command before it runs.
+4. **Rsync execution.** The command is executed **locally** (never via
+   the orchestrator-bound ssh) so rsync's `--progress` output streams
+   straight through to the operator's terminal. The shape is:
+
+   ```
+   rsync --verbose --archive --compress --update --progress \
+     -e 'ssh -o StrictHostKeyChecking=no [-i KEY] [-J Remote] -p PORT' \
+     SRC DST
+   ```
+
+   - `--instance-key` is `~`-expanded and passed as `-i` on the
+     **inner** ssh only — the orchestrator-bound ssh that ran steps 1
+     and 2 used the operator's normal ssh configuration.
+   - `--remote=user@host` becomes `-J user@host` so the operator's
+     bastion is interpreted on the local side and rsync connects to
+     the container's published port through the jump.
+   - `SRC` and `DST` are oriented per command: `push` sends
+     `LOCAL → user@localhost:INSTANCE_PATH`, `pull` sends
+     `user@localhost:INSTANCE_PATH → LOCAL`. The local path is
+     `~`-expanded before being passed to rsync.
+
+Both `--local-path` and `--instance-path` are required; omitting
+either fails fast with a flag-name error before any orchestrator
+command is issued.
+
 ## Status
 
-`create`, `delete`, `list`, `shell`, and `exec` are implemented
-end-to-end. `pull` and `push` are wired up to the cobra parser but
-their action layer is still a no-op: they accept and validate flags,
-then return success without performing any orchestrator, SSH, or
-file-transfer work. The behaviours described above are the
-**specification** that future implementation work is held against.
+`create`, `delete`, `list`, `shell`, `exec`, `pull`, and `push` are
+all implemented end-to-end. The behaviours described above are the
+**specification** the implementation is held against — if the two
+disagree, this file is canonical and the code should be updated.

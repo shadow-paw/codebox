@@ -34,9 +34,3 @@ func newRootCmd() *cobra.Command {
 	)
 	return root
 }
-
-// stub returns a RunE that does nothing. Used by every command while the
-// action layer is unimplemented; replace as each operation gets wired up.
-func stub() func(*cobra.Command, []string) error {
-	return func(*cobra.Command, []string) error { return nil }
-}

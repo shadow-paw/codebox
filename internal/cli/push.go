@@ -1,6 +1,15 @@
 package cli
 
-import "github.com/spf13/cobra"
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+
+	"github.com/spf13/cobra"
+
+	"codebox/internal/app"
+)
 
 type pushOpts struct {
 	orchestrator string
@@ -18,7 +27,10 @@ func newPushCmd() *cobra.Command {
 		Short: "Copy files from the local machine to a sandbox instance",
 		Long:  "Copy a file or directory from the local machine up to a sandbox instance.",
 		Args:  cobra.ExactArgs(1),
-		RunE:  stub(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runPush(cmd.Context(),
+				cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], opts)
+		},
 	}
 
 	f := cmd.Flags()
@@ -34,4 +46,24 @@ func newPushCmd() *cobra.Command {
 	f.StringVar(&opts.instancePath, "instance-path", "",
 		"Directory on the instance to copy into")
 	return cmd
+}
+
+func runPush(
+	ctx context.Context,
+	stdout, stderr io.Writer,
+	instance string,
+	opts pushOpts,
+) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("locate home directory: %w", err)
+	}
+	return app.New(home).Push(ctx, stdout, stderr, app.PushRequest{
+		Instance:     instance,
+		Orchestrator: opts.orchestrator,
+		Remote:       opts.remote,
+		InstanceKey:  opts.instanceKey,
+		LocalPath:    opts.localPath,
+		InstancePath: opts.instancePath,
+	})
 }

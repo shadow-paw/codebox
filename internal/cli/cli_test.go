@@ -76,26 +76,32 @@ func TestRun_Help_ShowsAllCommands(t *testing.T) {
 	}
 }
 
-func TestSubcommands_ParseAsStubs(t *testing.T) {
+// TestPullPush_HelpListsFlags exercises the cobra wiring for the
+// pull/push commands without invoking their action layer. The full
+// behaviour is covered by app-layer tests; this guards the flag
+// surface visible to operators.
+func TestPullPush_HelpListsFlags(t *testing.T) {
 	t.Parallel()
 
-	cases := [][]string{
-		{
-			"pull", "demo",
-			"--instance-key=k", "--instance-path=/etc/hostname", "--local-path=.",
-		},
-		{
-			"push", "demo",
-			"--instance-key=k", "--local-path=./README.md", "--instance-path=/tmp",
-		},
+	cases := map[string][]string{
+		"pull": {"--orchestrator", "--remote", "--instance-key", "--instance-path", "--local-path"},
+		"push": {"--orchestrator", "--remote", "--instance-key", "--local-path", "--instance-path"},
 	}
-	for _, args := range cases {
-		args := args
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
+	for cmd, wants := range cases {
+		cmd, wants := cmd, wants
+		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
-			var so, se bytes.Buffer
-			if code := cli.Run(context.Background(), args, &so, &se); code != 0 {
-				t.Fatalf("exit code = %d, want 0\nstderr=%s", code, se.String())
+			stdout, _ := runCLI(t, []string{cmd, "--help"})
+			prev := -1
+			for _, flag := range wants {
+				pos := strings.Index(stdout, flag)
+				if pos == -1 {
+					t.Fatalf("%s --help missing flag %q\n%s", cmd, flag, stdout)
+				}
+				if pos <= prev {
+					t.Fatalf("%s --help flag %q out of order\n%s", cmd, flag, stdout)
+				}
+				prev = pos
 			}
 		})
 	}
