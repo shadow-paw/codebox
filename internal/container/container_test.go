@@ -91,3 +91,46 @@ func TestRun_QuotesInstanceName(t *testing.T) {
 		t.Errorf("Run should shell-quote the instance name:\n  got: %s", got)
 	}
 }
+
+func TestListRunningNames_FormatIsParseable(t *testing.T) {
+	t.Parallel()
+	e, _ := container.New("podman")
+	got := e.ListRunningNames()
+	want := "podman ps --format '{{.Names}}'"
+	if got != want {
+		t.Fatalf("ListRunningNames = %q, want %q", got, want)
+	}
+}
+
+func TestStop_QuotesInstanceName(t *testing.T) {
+	t.Parallel()
+	e, _ := container.New("podman")
+	if got := e.Stop("demo"); got != "podman stop 'demo'" {
+		t.Errorf("Stop = %q, want %q", got, "podman stop 'demo'")
+	}
+	if got := e.Stop("nasty'name"); !strings.Contains(got, `'nasty'\''name'`) {
+		t.Errorf("Stop should shell-quote the instance name: %s", got)
+	}
+}
+
+func TestRemove_QuotesInstanceName(t *testing.T) {
+	t.Parallel()
+	e, _ := container.New("docker")
+	if got := e.Remove("demo"); got != "docker rm 'demo'" {
+		t.Errorf("Remove = %q, want %q", got, "docker rm 'demo'")
+	}
+	if got := e.Remove("nasty'name"); !strings.Contains(got, `'nasty'\''name'`) {
+		t.Errorf("Remove should shell-quote the instance name: %s", got)
+	}
+}
+
+func TestUntag_QuotesInstanceName(t *testing.T) {
+	t.Parallel()
+	e, _ := container.New("podman")
+	if got := e.Untag("demo"); got != "podman untag 'demo'" {
+		t.Errorf("Untag = %q, want %q", got, "podman untag 'demo'")
+	}
+	if got := e.Untag("nasty'name"); !strings.Contains(got, `'nasty'\''name'`) {
+		t.Errorf("Untag should shell-quote the instance name: %s", got)
+	}
+}

@@ -36,6 +36,28 @@ func (e *Engine) ListAllNames() string {
 	return e.bin + " ps -a --format '{{.Names}}'"
 }
 
+// ListRunningNames is the shell command that prints only running
+// container names, one per line on stdout.
+func (e *Engine) ListRunningNames() string {
+	return e.bin + " ps --format '{{.Names}}'"
+}
+
+// Stop returns the shell command that stops a running container.
+func (e *Engine) Stop(instance string) string {
+	return fmt.Sprintf("%s stop %s", e.bin, shquote(instance))
+}
+
+// Remove returns the shell command that removes a stopped container.
+func (e *Engine) Remove(instance string) string {
+	return fmt.Sprintf("%s rm %s", e.bin, shquote(instance))
+}
+
+// Untag returns the shell command that strips every tag from the image
+// codebox built for instance.
+func (e *Engine) Untag(instance string) string {
+	return fmt.Sprintf("%s untag %s", e.bin, shquote(instance))
+}
+
 // Build returns a shell snippet that builds an image tagged `instance`
 // from a Dockerfile supplied on stdin. The build context is a fresh
 // empty directory so no files from the operator's working tree are

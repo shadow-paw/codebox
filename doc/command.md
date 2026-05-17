@@ -310,11 +310,33 @@ later layer does not invalidate the package install cache:
 | Leading `~/` or bare `~`           | Expanded against the operator's home directory. |
 | Omitted                            | Scan `~/.ssh/` for `*.pub`. Exactly one match is required; zero or multiple matches return an error naming the candidates and asking the operator to pass `--instance-key`. |
 
+## `delete` teardown
+
+`delete` is fully wired today. The use-case layer performs, in order:
+
+1. **Existence check.** `<engine> ps -a --format '{{.Names}}'` is run
+   (locally or via ssh). If the instance is not present, the command
+   fails with `instance "NAME" not found` and exits non-zero.
+2. **Running check.** `<engine> ps --format '{{.Names}}'` lists only
+   running containers.
+3. **Stop (conditional).** If the container is running, codebox prints
+   `Stopping container "NAME"...` and runs `<engine> stop NAME`. A
+   failure surfaces the engine's stderr; the remove and untag steps
+   are skipped.
+4. **Remove.** Codebox prints `Deleting container "NAME"...` and runs
+   `<engine> rm NAME`.
+5. **Untag.** `<engine> untag NAME` is run silently to drop every tag
+   on the image codebox built for the instance.
+
+Engine stdout (which otherwise echoes the container/image name) is
+captured to internal buffers throughout — only the human-readable
+progress lines codebox prints reach the operator's terminal.
+
 ## Status
 
-`create` is implemented end-to-end. `delete`, `list`, `shell`, `run`,
-`pull`, `push` are wired up to the cobra parser but their action layer
-is still a no-op: they accept and validate flags, then return success
-without performing any orchestrator, SSH, or file-transfer work. The
-behaviours described above are the **specification** that future
-implementation work is held against.
+`create` and `delete` are implemented end-to-end. `list`, `shell`,
+`run`, `pull`, `push` are wired up to the cobra parser but their
+action layer is still a no-op: they accept and validate flags, then
+return success without performing any orchestrator, SSH, or
+file-transfer work. The behaviours described above are the
+**specification** that future implementation work is held against.

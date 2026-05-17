@@ -86,13 +86,23 @@ func precheckNotExists(ctx context.Context, rnr CommandRunner, eng *container.En
 	if err := rnr.Run(ctx, eng.ListAllNames(), nil, &out, &errBuf); err != nil {
 		return wrapRunErr("list containers", err, &errBuf)
 	}
-	for _, line := range strings.Split(out.String(), "\n") {
-		if strings.TrimSpace(line) == req.Instance {
-			return fmt.Errorf("instance %q already exists; stop and delete it first:\n  %s",
-				req.Instance, deleteHint(req))
-		}
+	if nameInList(out.String(), req.Instance) {
+		return fmt.Errorf("instance %q already exists; stop and delete it first:\n  %s",
+			req.Instance, deleteHint(req))
 	}
 	return nil
+}
+
+// nameInList reports whether name appears as its own line in the
+// newline-separated output produced by `<engine> ps ... --format
+// '{{.Names}}'`. Surrounding whitespace is ignored.
+func nameInList(out, name string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == name {
+			return true
+		}
+	}
+	return false
 }
 
 // wrapRunErr maps a runner error into a stable user-facing message.
