@@ -47,12 +47,8 @@ install -m 0755 bin/codebox /usr/local/bin/codebox
 
 ## Usage
 
-Run the binary directly after building:
-
-```sh
-$ ./bin/codebox
-hello world
-```
+See [`doc/command.md`](doc/command.md) for the full CLI reference —
+invocation, subcommands, flags, defaults, and exit codes.
 
 Available `make` targets:
 
