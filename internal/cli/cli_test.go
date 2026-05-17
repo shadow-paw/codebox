@@ -3,11 +3,34 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"codebox/internal/cli"
 )
+
+// withFakeHome sets HOME (and USERPROFILE on Windows) to a fresh temp
+// directory containing a synthetic ~/.ssh and returns the directory.
+// Callers may not invoke t.Parallel — t.Setenv forbids it.
+func withFakeHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatalf("mkdir .ssh: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return home
+}
+
+func writePub(t *testing.T, home, name, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(home, ".ssh", name), []byte(body), 0o600); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+}
 
 // runCLI invokes cli.Run with a fresh context and capture buffers. It
 // fails the test if the exit code is non-zero so that individual test
@@ -57,13 +80,6 @@ func TestSubcommands_ParseAsStubs(t *testing.T) {
 	t.Parallel()
 
 	cases := [][]string{
-		{
-			"create", "demo",
-			"--orchestrator=podman", "--remote=u@h", "--instance-key=k",
-			"--rebuild", "--os=debian_12",
-			"--python=3.14", "--node=24", "--golang=1.26.0", "--dotnet=10",
-			"--claude", "--codex", "--opencode", "--podman", "--psql",
-		},
 		{"delete", "demo", "--orchestrator=docker", "--remote=u@h"},
 		{"list", "--orchestrator=podman"},
 		{
@@ -197,5 +213,110 @@ func TestCreate_FlagOrderMatchesSpec(t *testing.T) {
 				flag, flagsBlock)
 		}
 		prev = pos
+	}
+}
+
+// TestCreate_PrintsDockerfile_ExplicitKey covers the happy path: an
+// explicit --instance-key resolves to its sibling .pub, and the
+// rendered Dockerfile is emitted to stdout after the banner.
+func TestCreate_PrintsDockerfile_ExplicitKey(t *testing.T) {
+	home := withFakeHome(t)
+	const pub = "ssh-ed25519 AAAAEXPLICITKEY operator@host"
+	writePub(t, home, "id_ed25519.pub", pub+"\n")
+
+	var so, se bytes.Buffer
+	args := []string{
+		"create", "demo",
+		"--orchestrator=podman",
+		"--os=debian_13",
+		"--instance-key=~/.ssh/id_ed25519",
+	}
+	if code := cli.Run(context.Background(), args, &so, &se); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr=%s", code, se.String())
+	}
+
+	out := so.String()
+	wants := []string{
+		"# syntax=docker/dockerfile:1.7",
+		"FROM docker.io/debian:13.4",
+		"apt-get install -y --no-install-recommends",
+		"useradd -m -s /bin/bash user",
+		"usermod -p '*NP' user",
+		"/etc/ssh/sshd_config.d/10-codebox.conf",
+		"EXPOSE 2222",
+		pub,
+	}
+	for _, w := range wants {
+		if !strings.Contains(out, w) {
+			t.Errorf("create output missing %q", w)
+		}
+	}
+}
+
+// TestCreate_AutoDetectsSingleKey covers the auto-detection branch:
+// with --instance-key omitted and exactly one *.pub in ~/.ssh, that
+// key is embedded.
+func TestCreate_AutoDetectsSingleKey(t *testing.T) {
+	home := withFakeHome(t)
+	const pub = "ssh-ed25519 AAAAAUTOKEY operator@host"
+	writePub(t, home, "id_ed25519.pub", pub+"\n")
+
+	var so, se bytes.Buffer
+	if code := cli.Run(context.Background(),
+		[]string{"create", "demo", "--os=ubuntu_24"}, &so, &se); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr=%s", code, se.String())
+	}
+	if !strings.Contains(so.String(), pub) {
+		t.Fatalf("auto-detected key not embedded in output:\n%s", so.String())
+	}
+	if !strings.Contains(so.String(), "FROM docker.io/ubuntu:24.04") {
+		t.Fatalf("ubuntu_24 base image missing")
+	}
+}
+
+// TestCreate_AutoDetectAmbiguous covers the failure path: zero or
+// multiple .pub files in ~/.ssh must surface a helpful error.
+func TestCreate_AutoDetectAmbiguous(t *testing.T) {
+	home := withFakeHome(t)
+	writePub(t, home, "id_rsa.pub", "ssh-rsa AAAA one")
+	writePub(t, home, "id_ed25519.pub", "ssh-ed25519 AAAA two")
+
+	var so, se bytes.Buffer
+	code := cli.Run(context.Background(), []string{"create", "demo"}, &so, &se)
+	if code == 0 {
+		t.Fatalf("exit = 0, want non-zero when auto-detect is ambiguous")
+	}
+	if !strings.Contains(se.String(), "--instance-key") {
+		t.Errorf("stderr should mention --instance-key, got:\n%s", se.String())
+	}
+}
+
+func TestCreate_RejectsUnknownOrchestrator(t *testing.T) {
+	home := withFakeHome(t)
+	writePub(t, home, "id_ed25519.pub", "ssh-ed25519 AAAA k")
+
+	var so, se bytes.Buffer
+	code := cli.Run(context.Background(),
+		[]string{"create", "demo", "--orchestrator=containerd"}, &so, &se)
+	if code == 0 {
+		t.Fatalf("exit = 0, want non-zero for bad orchestrator")
+	}
+	if !strings.Contains(se.String(), "unsupported orchestrator") {
+		t.Errorf("stderr should explain unsupported orchestrator:\n%s", se.String())
+	}
+}
+
+func TestCreate_RejectsUnknownOS(t *testing.T) {
+	home := withFakeHome(t)
+	writePub(t, home, "id_ed25519.pub", "ssh-ed25519 AAAA k")
+
+	var so, se bytes.Buffer
+	code := cli.Run(context.Background(),
+		[]string{"create", "demo", "--os=freebsd_14"}, &so, &se)
+	if code == 0 {
+		t.Fatalf("exit = 0, want non-zero for bad OS")
+	}
+	if !strings.Contains(se.String(), "unsupported os") {
+		t.Errorf("stderr should explain unsupported os:\n%s", se.String())
 	}
 }

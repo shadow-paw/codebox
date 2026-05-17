@@ -1,8 +1,20 @@
 package cli
 
-import "github.com/spf13/cobra"
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"codebox/internal/app"
+)
 
 type createOpts struct {
+	instance     string
 	orchestrator string
 	remote       string
 	instanceKey  string
@@ -57,11 +69,15 @@ func newCreateCmd() *cobra.Command {
 		Use:   "create INSTANCE",
 		Short: "Create a new sandbox instance",
 		Long: "Create a new sandbox instance.\n\n" +
-			"The instance is built from a base OS image with the requested language\n" +
-			"runtimes and developer tools pre-installed. Defaults target a local\n" +
-			"rootless Podman setup; pass --remote to provision on another host.",
+			"This release renders the Dockerfile for the instance and prints it\n" +
+			"to stdout; it does not yet hand the file to the orchestrator.\n" +
+			"Defaults target a local rootless Podman setup; pass --remote to\n" +
+			"target another host once provisioning is wired up.",
 		Args: cobra.ExactArgs(1),
-		RunE: stub(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts.instance = args[0]
+			return runCreate(cmd.Context(), cmd.OutOrStdout(), opts)
+		},
 	}
 
 	f := cmd.Flags()
@@ -97,4 +113,33 @@ func newCreateCmd() *cobra.Command {
 
 	cmd.SetHelpTemplate(createHelpTemplate)
 	return cmd
+}
+
+func runCreate(ctx context.Context, out io.Writer, opts createOpts) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("locate home directory: %w", err)
+	}
+
+	return app.New(home).Create(ctx, out, app.CreateRequest{
+		Instance:     opts.instance,
+		Orchestrator: opts.orchestrator,
+		OS:           opts.osImage,
+		InstanceKey:  expandHome(opts.instanceKey, home),
+	})
+}
+
+// expandHome replaces a leading "~/" with home so users can pass paths
+// the way they would type them in a shell. An empty input returns "".
+func expandHome(p, home string) string {
+	if p == "" {
+		return ""
+	}
+	if p == "~" {
+		return home
+	}
+	if strings.HasPrefix(p, "~/") {
+		return filepath.Join(home, p[2:])
+	}
+	return p
 }

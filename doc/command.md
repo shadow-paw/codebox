@@ -189,10 +189,67 @@ codebox push demo \
 | `--local-path`    | path   | *(unset)* | File or directory on the local machine to copy from. |
 | `--instance-path` | path   | *(unset)* | Directory on the instance to copy into. |
 
+## `create` Dockerfile rendering
+
+`create` is the only command with a partial implementation today. It
+**generates** the Dockerfile for the requested instance and **prints it
+to stdout**; no image is built and no container is started. The output is
+the contract used by callers (and by tests) while the action layer is
+filled in.
+
+### Base images
+
+| `--os`      | `FROM` reference              |
+| ----------- | ----------------------------- |
+| `debian_12` | `docker.io/debian:12.13`      |
+| `debian_13` | `docker.io/debian:13.4`       |
+| `ubuntu_24` | `docker.io/ubuntu:24.04`      |
+| `ubuntu_26` | `docker.io/ubuntu:26.04`      |
+| `redhat_10` | `docker.io/redhat/ubi10:10.1` |
+
+### Layer order
+
+The Dockerfile is built in this order so that an unrelated change to a
+later layer does not invalidate the package install cache:
+
+1. Install base packages — `ca-certificates`, `nano`, `vim`, `sudo`,
+   `openssl`, `openssh-server`, `rsync`, `git`,
+   `iputils-ping`/`iputils`, `dnsutils`/`bind-utils`, `curl`. Names are
+   remapped per distro family. The distro's build toolchain
+   (`build-essential` on apt, `"Development Tools"` group on dnf) is
+   installed in the same layer. Language and tool flags (`--python`,
+   `--claude`, ...) are accepted but not yet installed.
+2. OS-specific fixes (`debian_13`, `ubuntu_26`, `redhat_10` only):
+   overwrite `/etc/pam.d/sudo` with the minimal container-friendly
+   stack.
+3. Create user `user` with a locked password slot (`useradd`), then
+   mark the account unlocked with `usermod -p '*NP' user` so pubkey
+   login succeeds.
+4. Configure sshd: create `/run/sshd`, relax `pam_loginuid` to
+   `optional`, and drop a `10-codebox.conf` into `/etc/ssh/sshd_config.d`
+   with `Port 2222`, `PubkeyAuthentication yes`,
+   `PasswordAuthentication no`, `UsePAM no`.
+5. Configure sudoers: passwordless sudo for `user` via
+   `/etc/sudoers.d/user` (mode 0440).
+6. Init script `/usr/local/bin/codebox-init` that execs `sshd` and
+   `sleep infinity`.
+7. Install the operator's public key into
+   `/home/user/.ssh/authorized_keys` (mode 0600, owned by `user`).
+8. `EXPOSE 2222`, `CMD ["/usr/local/bin/codebox-init"]`.
+
+### `--instance-key` resolution
+
+| Input                              | Behaviour |
+| ---------------------------------- | --------- |
+| Path ending in `.pub`              | Read directly. |
+| Path **not** ending in `.pub`      | `.pub` is appended, then read. |
+| Leading `~/` or bare `~`           | Expanded against the operator's home directory. |
+| Omitted                            | Scan `~/.ssh/` for `*.pub`. Exactly one match is required; zero or multiple matches return an error naming the candidates and asking the operator to pass `--instance-key`. |
+
 ## Status
 
-All commands listed here are wired up to the cobra parser but their action
-layer is a no-op. They accept and validate flags, then return success
-without performing any orchestrator, SSH, or file-transfer work. The
-behaviours described above are the **specification** that future
-implementation work is held against.
+All other commands listed here are wired up to the cobra parser but
+their action layer is still a no-op. They accept and validate flags,
+then return success without performing any orchestrator, SSH, or
+file-transfer work. The behaviours described above are the
+**specification** that future implementation work is held against.
