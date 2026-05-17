@@ -392,11 +392,44 @@ Connection-level ssh failures (exit status 255) bubble up as
 `ssh: could not connect to <host>` so the operator can distinguish
 them from a non-zero exit from the in-container shell.
 
+## `exec` command execution
+
+`exec` is fully wired today. The use-case layer performs, in order:
+
+1. **Existence check.** `<engine> ps -a --format '{{.Names}}'` is run
+   against `--remote` (locally if unset). When the instance is missing,
+   the command fails with `instance "NAME" not found` and exits
+   non-zero before any further work.
+2. **Host port lookup.** `<engine> port NAME 2222` is run on the same
+   target; the first `<addr>:<port>` line is parsed and the numeric
+   port retained. A stopped container produces no mapping and surfaces
+   `instance "NAME" is not exposing port 2222; is it running?`.
+3. **Remote command.** A locally-exec'd `ssh` connects to the
+   container's published port with stdin/stdout/stderr passed through
+   unchanged, so callers can pipe data in or out. The command shape is:
+
+   - **Local** (no `--remote`):
+     `ssh -o StrictHostKeyChecking=no [-i KEY] user@localhost -p PORT '<inner>'`
+   - **Remote** (`--remote=ops@bastion`):
+     `ssh -o StrictHostKeyChecking=no [-i KEY] -J ops@bastion user@localhost -p PORT '<inner>'`
+
+   `--instance-key` is `~`-expanded and passed as `-i` on the
+   container-bound ssh only; it is **never** passed to the
+   orchestrator-bound ssh that ran steps 1 and 2. `<inner>` is
+   `COMMAND` followed by each `ARG`, single-quoted individually so the
+   in-container login shell preserves argument boundaries (spaces and
+   shell metacharacters survive verbatim).
+
+Codebox exits with the inner command's status code; connection-level
+ssh failures (exit status 255) surface as a distinct error naming the
+host so they can be told apart from a non-zero exit from the inner
+command.
+
 ## Status
 
-`create`, `delete`, `list`, and `shell` are implemented end-to-end.
-`exec`, `pull`, `push` are wired up to the cobra parser but their
-action layer is still a no-op: they accept and validate flags, then
-return success without performing any orchestrator, SSH, or
+`create`, `delete`, `list`, `shell`, and `exec` are implemented
+end-to-end. `pull` and `push` are wired up to the cobra parser but
+their action layer is still a no-op: they accept and validate flags,
+then return success without performing any orchestrator, SSH, or
 file-transfer work. The behaviours described above are the
 **specification** that future implementation work is held against.

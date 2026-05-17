@@ -81,11 +81,6 @@ func TestSubcommands_ParseAsStubs(t *testing.T) {
 
 	cases := [][]string{
 		{
-			"exec", "demo",
-			"--orchestrator=podman", "--remote=u@h", "--instance-key=k",
-			"--", "ls", "-la",
-		},
-		{
 			"pull", "demo",
 			"--instance-key=k", "--instance-path=/etc/hostname", "--local-path=.",
 		},
@@ -103,6 +98,33 @@ func TestSubcommands_ParseAsStubs(t *testing.T) {
 				t.Fatalf("exit code = %d, want 0\nstderr=%s", code, se.String())
 			}
 		})
+	}
+}
+
+// TestExec_SuppressesBanner ensures `codebox exec` produces no banner
+// header. exec's stdout is meant to be piped into other tools, so a
+// decorative banner would corrupt the stream. The exec invocation here
+// fails before any ssh runs (instance lookup goes to a non-existent
+// engine), so we assert only on stdout, which is the channel that
+// matters for downstream consumers.
+func TestExec_SuppressesBanner(t *testing.T) {
+	t.Parallel()
+	var so, se bytes.Buffer
+	_ = cli.Run(context.Background(),
+		[]string{"exec", "demo", "--orchestrator=podman", "--", "ls"},
+		&so, &se)
+	if strings.Contains(so.String(), "https://github.com/shadow-paw/codebox") {
+		t.Errorf("stdout should not contain banner, got:\n%s", so.String())
+	}
+}
+
+// TestExec_RejectsMissingInstance still prints the banner via the help
+// path — only the actual command stream is banner-free.
+func TestExec_HelpKeepsBanner(t *testing.T) {
+	t.Parallel()
+	stdout, _ := runCLI(t, []string{"--help"})
+	if !strings.Contains(stdout, "https://github.com/shadow-paw/codebox") {
+		t.Errorf("--help should keep the banner; got:\n%s", stdout)
 	}
 }
 

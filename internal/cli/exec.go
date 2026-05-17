@@ -1,9 +1,15 @@
 package cli
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
+	"os"
 
 	"github.com/spf13/cobra"
+
+	"codebox/internal/app"
 )
 
 type execOpts struct {
@@ -22,7 +28,11 @@ func newExecCmd() *cobra.Command {
 			"status code. Place '--' before COMMAND so flags meant for the\n" +
 			"inner command are not consumed by codebox.",
 		Args: execArgs,
-		RunE: stub(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runExec(cmd.Context(),
+				cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
+				args[0], args[1], args[2:], opts)
+		},
 	}
 
 	f := cmd.Flags()
@@ -51,4 +61,26 @@ func execArgs(cmd *cobra.Command, args []string) error {
 		return errors.New("missing COMMAND after '--'")
 	}
 	return nil
+}
+
+func runExec(
+	ctx context.Context,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	instance, command string,
+	innerArgs []string,
+	opts execOpts,
+) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("locate home directory: %w", err)
+	}
+	return app.New(home).Exec(ctx, stdin, stdout, stderr, app.ExecRequest{
+		Instance:     instance,
+		Orchestrator: opts.orchestrator,
+		Remote:       opts.remote,
+		InstanceKey:  opts.instanceKey,
+		Command:      command,
+		Args:         innerArgs,
+	})
 }

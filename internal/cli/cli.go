@@ -17,12 +17,15 @@ import (
 // IO streams. It returns a process exit code (0 on success, non-zero on
 // failure or signal-driven cancellation).
 //
-// The banner is always written to stdout before any command runs, regardless
-// of whether the invocation is a real command, --help, or --version.
+// The banner is written to stdout before any command runs — except for
+// `codebox exec`, whose output is intended to be piped into other tools
+// so a decorative header would corrupt the stream.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if _, err := fmt.Fprint(stdout, banner()); err != nil {
-		_, _ = fmt.Fprintf(stderr, "codebox: %v\n", err)
-		return 1
+	if !isExecInvocation(args) {
+		if _, err := fmt.Fprint(stdout, banner()); err != nil {
+			_, _ = fmt.Fprintf(stderr, "codebox: %v\n", err)
+			return 1
+		}
 	}
 
 	root := newRootCmd()
@@ -45,4 +48,21 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// isExecInvocation reports whether the operator is running `codebox
+// exec`. Detection is positional: the first non-flag token determines
+// the subcommand, so global flags placed before it do not perturb the
+// check.
+func isExecInvocation(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if len(a) > 0 && a[0] == '-' {
+			continue
+		}
+		return a == "exec"
+	}
+	return false
 }
