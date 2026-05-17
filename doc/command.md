@@ -362,10 +362,40 @@ surface `(stopped)` in place of an unusable hint. Otherwise:
 When no codebox containers are present, the single line
 `No codebox instances found.` is printed and the command exits `0`.
 
+## `shell` interactive session
+
+`shell` is fully wired today. The use-case layer performs, in order:
+
+1. **Existence check.** `<engine> ps -a --format '{{.Names}}'` is run
+   against `--remote` (locally if unset). When the instance is missing,
+   the command fails with `instance "NAME" not found` and exits
+   non-zero before any further work.
+2. **Host port lookup.** `<engine> port NAME 2222` is run on the same
+   target; the first `<addr>:<port>` line is parsed and the numeric
+   port retained. A stopped container produces no mapping and surfaces
+   `instance "NAME" is not exposing port 2222; is it running?`.
+3. **Interactive ssh.** A locally-exec'd `ssh` connects to the
+   container's published port with stdin/stdout/stderr passed through
+   unchanged, so the operator gets a real tty. The command shape is:
+
+   - **Local** (no `--remote`):
+     `ssh -o StrictHostKeyChecking=no [-i KEY] [-L L:localhost:R ...] user@localhost -p PORT`
+   - **Remote** (`--remote=ops@bastion`):
+     `ssh -o StrictHostKeyChecking=no [-i KEY] [-L L:localhost:R ...] -J ops@bastion user@localhost -p PORT`
+
+   `--instance-key` is `~`-expanded and passed as `-i`; it is **never**
+   passed to the orchestrator-bound ssh that ran step 1 and 2. Each
+   `--port=L:R` becomes `-L L:localhost:R` so the remote end is
+   interpreted on the container side of any `-J` jump.
+
+Connection-level ssh failures (exit status 255) bubble up as
+`ssh: could not connect to <host>` so the operator can distinguish
+them from a non-zero exit from the in-container shell.
+
 ## Status
 
-`create`, `delete`, and `list` are implemented end-to-end. `shell`,
-`run`, `pull`, `push` are wired up to the cobra parser but their
+`create`, `delete`, `list`, and `shell` are implemented end-to-end.
+`exec`, `pull`, `push` are wired up to the cobra parser but their
 action layer is still a no-op: they accept and validate flags, then
 return success without performing any orchestrator, SSH, or
 file-transfer work. The behaviours described above are the

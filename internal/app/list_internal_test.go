@@ -68,6 +68,29 @@ func TestParseHostPort(t *testing.T) {
 	}
 }
 
+func TestParsePortLines(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in, want string
+	}{
+		{"0.0.0.0:33000\n", "33000"},
+		{"[::]:33000\n", "33000"},
+		{"0.0.0.0:33000\n[::]:33000\n", "33000"},
+		{"  0.0.0.0:42000  \n", "42000"},
+		{"", ""},
+		{"weird\n", ""},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.in, func(t *testing.T) {
+			t.Parallel()
+			if got := parsePortLines(tc.in); got != tc.want {
+				t.Errorf("parsePortLines(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseCreatedAt(t *testing.T) {
 	t.Parallel()
 	// Both engines emit time.Time.String() — with or without fractional

@@ -66,6 +66,14 @@ func (e *Engine) Untag(instance string) string {
 	return fmt.Sprintf("%s untag %s", e.bin, shquote(instance))
 }
 
+// HostPort returns the shell command that prints the host-published
+// address mapped to the container's sshd port (2222). Both podman and
+// docker emit one `<addr>:<port>` line per protocol, e.g.
+// `0.0.0.0:33000` or `[::]:33000`.
+func (e *Engine) HostPort(instance string) string {
+	return fmt.Sprintf("%s port %s 2222", e.bin, shquote(instance))
+}
+
 // Build returns a shell snippet that builds an image tagged `instance`
 // from a Dockerfile supplied on stdin. The build context is a fresh
 // empty directory so no files from the operator's working tree are

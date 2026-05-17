@@ -134,6 +134,17 @@ func TestListCodeboxInstances_FormatIsParseable(t *testing.T) {
 	}
 }
 
+func TestHostPort_FormatIsParseable(t *testing.T) {
+	t.Parallel()
+	e, _ := container.New("podman")
+	if got, want := e.HostPort("demo"), "podman port 'demo' 2222"; got != want {
+		t.Fatalf("HostPort = %q, want %q", got, want)
+	}
+	if got := e.HostPort("nasty'name"); !strings.Contains(got, `'nasty'\''name'`) {
+		t.Errorf("HostPort should shell-quote the instance name: %s", got)
+	}
+}
+
 func TestUntag_QuotesInstanceName(t *testing.T) {
 	t.Parallel()
 	e, _ := container.New("podman")

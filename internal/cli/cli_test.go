@@ -81,11 +81,6 @@ func TestSubcommands_ParseAsStubs(t *testing.T) {
 
 	cases := [][]string{
 		{
-			"shell", "demo",
-			"--orchestrator=podman", "--remote=u@h", "--instance-key=k",
-			"--port=8000:3000", "--port=8001:3001",
-		},
-		{
 			"exec", "demo",
 			"--orchestrator=podman", "--remote=u@h", "--instance-key=k",
 			"--", "ls", "-la",
