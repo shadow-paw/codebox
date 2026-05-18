@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -114,6 +115,9 @@ func newCreateCmd() *cobra.Command {
 }
 
 func runCreate(ctx context.Context, out io.Writer, opts createOpts) error {
+	if err := rejectUnsupportedFlags(opts); err != nil {
+		return err
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("locate home directory: %w", err)
@@ -125,5 +129,35 @@ func runCreate(ctx context.Context, out io.Writer, opts createOpts) error {
 		InstanceKey:  opts.instanceKey,
 		Remote:       opts.remote,
 		Rebuild:      opts.rebuild,
+		Python:       opts.python,
+		Node:         opts.node,
+		Golang:       opts.golang,
+		Dotnet:       opts.dotnet,
+		Psql:         opts.psql,
 	})
+}
+
+// rejectUnsupportedFlags fails fast when the operator enables a flag
+// whose installer has not yet been implemented. The flags are kept on
+// the surface so help text and shell completion stay stable, but
+// invoking them errors out instead of silently producing an image
+// without the requested tool.
+func rejectUnsupportedFlags(opts createOpts) error {
+	var names []string
+	if opts.claude {
+		names = append(names, "--claude")
+	}
+	if opts.codex {
+		names = append(names, "--codex")
+	}
+	if opts.opencode {
+		names = append(names, "--opencode")
+	}
+	if opts.podman {
+		names = append(names, "--podman")
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s not yet supported", strings.Join(names, ", "))
 }

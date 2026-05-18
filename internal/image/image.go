@@ -10,6 +10,7 @@ package image
 import (
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -22,6 +23,18 @@ type Options struct {
 	// /home/user/.ssh/authorized_keys inside the image. A trailing
 	// newline is normalised away before embedding.
 	AuthorizedKey string
+
+	// Optional language toolchains. An empty string disables the
+	// corresponding install layer; a non-empty string is passed
+	// through to the installer verbatim (e.g. "3.13", "24", "1.26.0",
+	// "10"). Validation of the value itself is left to the installer.
+	Python string
+	Node   string
+	Golang string
+	Dotnet string
+
+	// Optional tools.
+	Psql bool
 }
 
 // SupportedOS returns the OS keys understood by Generate in
@@ -46,8 +59,37 @@ func Generate(w io.Writer, opts Options) error {
 	if key == "" {
 		return fmt.Errorf("image: authorized key is empty")
 	}
-	if _, err := io.WriteString(w, render(s, key)); err != nil {
+	if err := validateVersions(opts); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, render(s, key, opts)); err != nil {
 		return fmt.Errorf("image: write Dockerfile: %w", err)
+	}
+	return nil
+}
+
+// validateVersions rejects unsupported values for the optional language
+// toolchains. Each enum is documented in doc/command.md; out-of-set
+// versions fail before any Dockerfile is emitted so the operator gets a
+// concrete message instead of an opaque build error.
+func validateVersions(opts Options) error {
+	checks := []struct {
+		flag, value string
+		known       []string
+	}{
+		{"python", opts.Python, supportedPython},
+		{"node", opts.Node, supportedNode},
+		{"golang", opts.Golang, supportedGolang},
+		{"dotnet", opts.Dotnet, supportedDotnet},
+	}
+	for _, c := range checks {
+		if c.value == "" {
+			continue
+		}
+		if !slices.Contains(c.known, c.value) {
+			return fmt.Errorf("image: unsupported %s version %q (known: %s)",
+				c.flag, c.value, strings.Join(c.known, ", "))
+		}
 	}
 	return nil
 }

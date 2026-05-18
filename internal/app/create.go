@@ -26,6 +26,17 @@ type CreateRequest struct {
 	InstanceKey  string
 	Remote       string
 	Rebuild      bool
+
+	// Optional language toolchains; an empty string disables the
+	// corresponding install. Versions are passed through verbatim to
+	// the installer inside the image.
+	Python string
+	Node   string
+	Golang string
+	Dotnet string
+
+	// Optional tools.
+	Psql bool
 }
 
 // Create provisions a sandbox instance: it confirms the instance does
@@ -50,6 +61,11 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 	if err := image.Generate(&dockerfile, image.Options{
 		OS:            req.OS,
 		AuthorizedKey: authKey,
+		Python:        req.Python,
+		Node:          req.Node,
+		Golang:        req.Golang,
+		Dotnet:        req.Dotnet,
+		Psql:          req.Psql,
 	}); err != nil {
 		return err
 	}

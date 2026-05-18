@@ -255,6 +255,68 @@ func TestCreate_AutoDetectAmbiguous(t *testing.T) {
 	}
 }
 
+// TestCreate_RejectsUnsupportedAgentFlags pins the contract that the
+// agent/podman flags fail fast until their installers ship. The flag
+// surface is preserved (they still parse) but invoking them errors out.
+func TestCreate_RejectsUnsupportedAgentFlags(t *testing.T) {
+	for _, flag := range []string{"--claude", "--codex", "--opencode", "--podman"} {
+		flag := flag
+		t.Run(flag, func(t *testing.T) {
+			home := withFakeHome(t)
+			writePub(t, home, "id_ed25519.pub", "ssh-ed25519 AAAA k")
+
+			var so, se bytes.Buffer
+			code := cli.Run(context.Background(),
+				[]string{"create", "demo", flag}, &so, &se)
+			if code == 0 {
+				t.Fatalf("exit = 0, want non-zero for %s", flag)
+			}
+			if !strings.Contains(se.String(), flag) || !strings.Contains(se.String(), "not yet supported") {
+				t.Errorf("stderr should name %s as unsupported, got:\n%s", flag, se.String())
+			}
+		})
+	}
+}
+
+// TestCreate_RejectsUnsupportedAgentFlags_NamesAll surfaces every
+// unsupported flag in one error rather than one per invocation.
+func TestCreate_RejectsUnsupportedAgentFlags_NamesAll(t *testing.T) {
+	home := withFakeHome(t)
+	writePub(t, home, "id_ed25519.pub", "ssh-ed25519 AAAA k")
+
+	var so, se bytes.Buffer
+	code := cli.Run(context.Background(),
+		[]string{"create", "demo", "--claude", "--codex"}, &so, &se)
+	if code == 0 {
+		t.Fatalf("exit = 0, want non-zero when multiple unsupported flags are set")
+	}
+	for _, want := range []string{"--claude", "--codex", "not yet supported"} {
+		if !strings.Contains(se.String(), want) {
+			t.Errorf("stderr should mention %q, got:\n%s", want, se.String())
+		}
+	}
+}
+
+// TestCreate_RejectsUnsupportedVersion exercises the image-layer enum
+// check via the CLI surface — an unknown --python value surfaces as a
+// non-zero exit with a helpful message before any orchestrator command.
+func TestCreate_RejectsUnsupportedVersion(t *testing.T) {
+	home := withFakeHome(t)
+	writePub(t, home, "id_ed25519.pub", "ssh-ed25519 AAAA k")
+
+	var so, se bytes.Buffer
+	code := cli.Run(context.Background(),
+		[]string{"create", "demo", "--python=3.10"}, &so, &se)
+	if code == 0 {
+		t.Fatalf("exit = 0, want non-zero for unsupported python version")
+	}
+	for _, want := range []string{"unsupported python version", "3.12, 3.13, 3.14"} {
+		if !strings.Contains(se.String(), want) {
+			t.Errorf("stderr should mention %q, got:\n%s", want, se.String())
+		}
+	}
+}
+
 func TestCreate_RejectsUnknownOrchestrator(t *testing.T) {
 	home := withFakeHome(t)
 	writePub(t, home, "id_ed25519.pub", "ssh-ed25519 AAAA k")

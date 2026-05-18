@@ -281,8 +281,7 @@ later layer does not invalidate the package install cache:
    `iputils-ping`/`iputils`, `dnsutils`/`bind-utils`, `curl`. Names are
    remapped per distro family. The distro's build toolchain
    (`build-essential` on apt, `"Development Tools"` group on dnf) is
-   installed in the same layer. Language and tool flags (`--python`,
-   `--claude`, ...) are accepted but not yet installed.
+   installed in the same layer.
 2. OS-specific fixes (`debian_13`, `ubuntu_26`, `redhat_10` only):
    overwrite `/etc/pam.d/sudo` with the minimal container-friendly
    stack.
@@ -297,9 +296,40 @@ later layer does not invalidate the package install cache:
    `/etc/sudoers.d/user` (mode 0440).
 6. Init script `/usr/local/bin/codebox-init` that execs `sshd` and
    `sleep infinity`.
-7. Install the operator's public key into
+7. Optional language/tool layers (see [Optional toolchains](#optional-toolchains)).
+   Skipped entirely when no flag is set. `--claude`, `--codex`,
+   `--opencode`, and `--podman` are flag-bound for forward compatibility
+   but currently fail the command with `<flag> not yet supported` before
+   any orchestrator call.
+8. Install the operator's public key into
    `/home/user/.ssh/authorized_keys` (mode 0600, owned by `user`).
-8. `EXPOSE 2222`, `CMD ["/usr/local/bin/codebox-init"]`.
+9. `EXPOSE 2222`, `CMD ["/usr/local/bin/codebox-init"]`.
+
+### Optional toolchains
+
+Each flag emits its own layer in the slot between the init script and
+the public-key install. Layers that touch system paths run as root;
+home-scoped installs (`uv`, `nvm`) switch to `USER user` and then
+back to `USER root` so the subsequent key install retains its
+permissions.
+
+Version values are validated against the documented sets before any
+Dockerfile is emitted; an out-of-set value (e.g. `--python=3.10`) fails
+with `image: unsupported <flag> version "<value>" (known: ...)` and no
+orchestrator command is issued.
+
+PATH and toolchain exports are appended to the per-family login profile
+so interactive shells pick them up: `/home/user/.profile` on apt-family
+distros (Debian, Ubuntu) and `/home/user/.bash_profile` on dnf-family
+distros (Red Hat). Below, **PROFILE** refers to whichever file applies.
+
+| Flag       | Installs |
+| ---------- | -------- |
+| `--psql`   | `postgresql-client` (apt) or `postgresql` (dnf) via the distro package manager. |
+| `--golang=VER` | Downloads `https://go.dev/dl/goVER.linux-${arch}.tar.gz` (arch detected from `uname -m`; `amd64` and `arm64` supported), unpacks it to `/usr/local/go`, and appends `export PATH="/usr/local/go/bin:$PATH"` to **PROFILE**. |
+| `--dotnet=VER` | Runs `https://dot.net/v1/dotnet-install.sh --channel VER.0 --install-dir /usr/local/dotnet`, symlinks the runner to `/usr/local/bin/dotnet`, and appends `DOTNET_ROOT`, `PATH`, and `DOTNET_CLI_TELEMETRY_OPTOUT=1` exports to **PROFILE**. |
+| `--python=VER` | Runs `https://astral.sh/uv/install.sh` as user `user`, appends `export PATH="$HOME/.local/bin:$PATH"` to **PROFILE**, then runs `uv python install VER && uv python pin --global VER` to download the prebuilt CPython and set it as the global default for `uv`. |
+| `--node=VER` | On dnf-family distros, first installs `libatomic` (UBI omits it and recent V8 binaries link against it). Then installs nvm (pinned to `v0.40.1`) as user `user`, and runs `nvm install VER && nvm alias default VER`. |
 
 ### `--instance-key` resolution
 
