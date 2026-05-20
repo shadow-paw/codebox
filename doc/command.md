@@ -47,31 +47,34 @@ Create a new sandbox instance.
 ```
 codebox create demo \
   --orchestrator=podman --remote=user@host --instance-key=~/.ssh/id_rsa \
+  --https-proxy=http://proxy.corp:3128 \
   --os=debian_12 \
   --python=3.14 --node=24 --golang=1.26.0 --dotnet=10 \
-  --claude --codex --opencode --podman --psql
+  --claude --claude-credentials --codex --opencode --podman --psql
 ```
 
 Flags (in help order):
 
-| Flag             | Type   | Default        | Description |
-| ---------------- | ------ | -------------- | ----------- |
-| `--orchestrator` | enum   | `podman`       | Container orchestrator (`podman`, `docker`). |
-| `--remote`       | string | *(local)*      | Provision on a remote host (`user@host`). |
-| `--instance-key` | path   | *(auto)*       | SSH key for logging into the new instance. |
-| `--rebuild`      | bool   | `false`        | Force a rebuild of the base image even if a cached one exists. |
-| `--os`           | enum   | `debian_13`    | Base OS image (`debian_12`, `debian_13`, `ubuntu_24`, `ubuntu_26`, `redhat_10`). |
-| `--python`       | enum   | *(none)*       | Install Python at `3.12`, `3.13`, or `3.14`. |
-| `--node`         | enum   | *(none)*       | Install Node.js at major version `24`, `25`, or `26`. |
-| `--golang`       | enum   | *(none)*       | Install Go at version `1.26.0`. |
-| `--dotnet`       | enum   | *(none)*       | Install .NET at version `8` or `10`. |
-| `--claude`       | bool   | `false`        | Install Claude Code. |
-| `--codex`        | bool   | `false`        | Install OpenAI Codex CLI. |
-| `--opencode`     | bool   | `false`        | Install opencode. |
-| `--podman`       | bool   | `false`        | Install rootless Podman inside the instance. |
-| `--psql`         | bool   | `false`        | Install the psql PostgreSQL client. |
+| Flag                    | Type   | Default        | Description |
+| ----------------------- | ------ | -------------- | ----------- |
+| `--orchestrator`        | enum   | `podman`       | Container orchestrator (`podman`, `docker`). |
+| `--remote`              | string | *(local)*      | Provision on a remote host (`user@host`). |
+| `--instance-key`        | path   | *(auto)*       | SSH key for logging into the new instance. |
+| `--rebuild`             | bool   | `false`        | Force a rebuild of the base image even if a cached one exists. |
+| `--https-proxy`         | string | *(unset)*      | Append `export HTTPS_PROXY="<value>"` to the in-container user's login profile so interactive shells route HTTPS through the configured proxy. Other build-time downloads (apt, dnf, Go, .NET, uv, nvm) still go through the builder host's network — only the operator's shell inside the running container sees the proxy. The one exception is the `--claude` install layer, which exports `HTTPS_PROXY` inline so curl (and any sub-downloads the install script performs) route through the proxy too. The value is not validated; pass it the way curl would accept it (`http://proxy:3128`, `http://user:pw@proxy:3128`, ...). |
+| `--os`                  | enum   | `debian_13`    | Base OS image (`debian_12`, `debian_13`, `ubuntu_24`, `ubuntu_26`, `redhat_10`). |
+| `--python`              | enum   | *(none)*       | Install Python at `3.12`, `3.13`, or `3.14`. |
+| `--node`                | enum   | *(none)*       | Install Node.js at major version `24`, `25`, or `26`. |
+| `--golang`              | enum   | *(none)*       | Install Go at version `1.26.0`. |
+| `--dotnet`              | enum   | *(none)*       | Install .NET at version `8` or `10`. |
+| `--claude`              | bool   | `false`        | Install [Claude Code](https://claude.ai/code) via Anthropic's native installer. Also drops `/home/user/.claude.json` with the onboarding flag pre-set so the CLI does not prompt on first run inside the sandbox. |
+| `--claude-credentials`  | bool   | `false`        | After the container starts, rsync `~/.claude/.credentials.json` from the operator's machine into `/home/user/.claude/.credentials.json` inside the instance. Requires `--claude` and fails fast if it is not set. Credentials are **never** baked into the image. |
+| `--codex`               | bool   | `false`        | Install OpenAI Codex CLI. |
+| `--opencode`            | bool   | `false`        | Install opencode. |
+| `--podman`              | bool   | `false`        | Install rootless Podman inside the instance. |
+| `--psql`                | bool   | `false`        | Install the psql PostgreSQL client. |
 
-The `--help` output for `create` ends with five footer sections that
+The `--help` output for `create` ends with six footer sections that
 restate the legal values for each kind of flag:
 
 - **Orchestrators** — values accepted by `--orchestrator`.
@@ -79,6 +82,7 @@ restate the legal values for each kind of flag:
 - **Languages** — language runtime flags and their version values.
 - **Agents** — coding-agent install flags.
 - **Tools** — other tool install flags.
+- **Network** — proxy and other network-related knobs.
 
 ### `codebox delete INSTANCE`
 
@@ -297,10 +301,10 @@ later layer does not invalidate the package install cache:
 6. Init script `/usr/local/bin/codebox-init` that execs `sshd` and
    `sleep infinity`.
 7. Optional language/tool layers (see [Optional toolchains](#optional-toolchains)).
-   Skipped entirely when no flag is set. `--claude`, `--codex`,
-   `--opencode`, and `--podman` are flag-bound for forward compatibility
-   but currently fail the command with `<flag> not yet supported` before
-   any orchestrator call.
+   Skipped entirely when no flag is set. `--codex`, `--opencode`, and
+   `--podman` are flag-bound for forward compatibility but currently
+   fail the command with `<flag> not yet supported` before any
+   orchestrator call.
 8. Install the operator's public key into
    `/home/user/.ssh/authorized_keys` (mode 0600, owned by `user`).
 9. `EXPOSE 2222`, `CMD ["/usr/local/bin/codebox-init"]`.
@@ -328,8 +332,68 @@ distros (Red Hat). Below, **PROFILE** refers to whichever file applies.
 | `--psql`   | `postgresql-client` (apt) or `postgresql` (dnf) via the distro package manager. |
 | `--golang=VER` | Downloads `https://go.dev/dl/goVER.linux-${arch}.tar.gz` (arch detected from `uname -m`; `amd64` and `arm64` supported), unpacks it to `/usr/local/go`, and appends `export PATH="/usr/local/go/bin:$PATH"` to **PROFILE**. |
 | `--dotnet=VER` | Runs `https://dot.net/v1/dotnet-install.sh --channel VER.0 --install-dir /usr/local/dotnet`, symlinks the runner to `/usr/local/bin/dotnet`, and appends `DOTNET_ROOT`, `PATH`, and `DOTNET_CLI_TELEMETRY_OPTOUT=1` exports to **PROFILE**. |
-| `--python=VER` | Runs `https://astral.sh/uv/install.sh` as user `user`, appends `export PATH="$HOME/.local/bin:$PATH"` to **PROFILE**, then runs `uv python install VER && uv python pin --global VER` to download the prebuilt CPython and set it as the global default for `uv`. |
+| `--python=VER` | Runs `https://astral.sh/uv/install.sh` as user `user`, then runs `uv python install VER && uv python pin --global VER` to download the prebuilt CPython and set it as the global default for `uv`. (The `export PATH="$HOME/.local/bin:$PATH"` line is emitted once — see `--claude`.) |
 | `--node=VER` | On dnf-family distros, first installs `libatomic` (UBI omits it and recent V8 binaries link against it). Then installs nvm (pinned to `v0.40.1`) as user `user`, and runs `nvm install VER && nvm alias default VER`. |
+| `--claude` | Runs Anthropic's native installer (`curl -fsSL https://claude.ai/install.sh \| bash`) as user `user`. The installer drops the `claude` binary into `$HOME/.local/bin`; the corresponding PATH export is emitted once when `--claude` or `--python` is set. When `--https-proxy` is also set, the proxy is exported inline for this RUN (`export HTTPS_PROXY='URL' && curl ...`) so the install pipeline routes through it. The same layer also drops `/home/user/.claude.json` (owned by `user`) with `{"hasCompletedOnboarding": true, "defaultMode": "bypassPermissions"}` so the CLI skips the first-run prompt inside the sandbox. Credentials are not baked in — pass `--claude-credentials` to push them after the container starts. |
+
+### HTTPS proxy
+
+When `--https-proxy=URL` is set, codebox appends the line
+
+```
+export HTTPS_PROXY="URL"
+```
+
+to the in-container user's login profile — **PROFILE** as defined
+above (`/home/user/.profile` on apt-family distros,
+`/home/user/.bash_profile` on dnf-family distros). The proxy is **not**
+emitted as an `ENV` directive: image build downloads continue to use
+the builder host's normal network, and the proxy only takes effect
+once a login shell sources the profile (interactive `codebox shell`
+sessions, ssh login sessions targeting the container).
+
+Single quotes in the value are shell-escaped before being written so
+the surrounding `echo` invocation survives an embedded apostrophe;
+otherwise the value is passed through verbatim
+(`http://proxy:3128`, `http://user:pw@proxy:3128`, ...).
+
+### Claude credentials transfer
+
+`--claude-credentials` requires `--claude`. Setting credentials
+without the CLI install is rejected by the CLI parser before any
+work happens (`--claude-credentials requires --claude`). When both
+flags are set, the flag is honoured **after** the container's `run`
+step succeeds. The use-case layer:
+
+1. `stat`s `~/.claude/.credentials.json` on the operator's machine
+   **before** any orchestrator command is issued. A missing or
+   unreadable file fails the command with the underlying OS error
+   (the flag name is included in the wrapper), so the operator does
+   not have to wait for an image build to surface the problem.
+2. Looks up the host-side port for the in-container sshd via
+   `<engine> port INSTANCE 2222`, exactly like `push` / `pull`.
+3. Echoes the assembled rsync command bracketed by horizontal rules
+   (mirroring the Dockerfile and `push`/`pull` blocks) and runs it
+   **locally** so progress streams to the operator's terminal.
+4. If the first rsync fails (most often because sshd inside the
+   container is still coming up), waits **2 seconds** and retries
+   **exactly once**. The retry message names the original error so
+   the operator can see what is being recovered from. If the retry
+   also fails, that error is returned.
+
+The rsync invocation has the shape:
+
+```
+rsync --verbose --archive --compress --update --progress \
+  --mkpath --chmod=F0600 \
+  -e 'ssh -o StrictHostKeyChecking=no [-i KEY] [-J Remote] -p PORT' \
+  ~/.claude/.credentials.json user@localhost:/home/user/.claude/.credentials.json
+```
+
+- `--mkpath` ensures `/home/user/.claude` is created on the receiving
+  side even when neither `--claude` nor a previous run laid it down.
+- `--chmod=F0600` pins the file mode so the credentials land with the
+  same permissions Claude expects on the host.
 
 ### `--instance-key` resolution
 

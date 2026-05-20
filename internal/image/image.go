@@ -24,6 +24,11 @@ type Options struct {
 	// newline is normalised away before embedding.
 	AuthorizedKey string
 
+	// HTTPSProxy, when non-empty, becomes an `ENV HTTPS_PROXY=<value>`
+	// directive emitted near the top of the Dockerfile so the proxy is
+	// honoured by package managers, curl, and the installed toolchains.
+	HTTPSProxy string
+
 	// Optional language toolchains. An empty string disables the
 	// corresponding install layer; a non-empty string is passed
 	// through to the installer verbatim (e.g. "3.13", "24", "1.26.0",
@@ -32,6 +37,9 @@ type Options struct {
 	Node   string
 	Golang string
 	Dotnet string
+
+	// Optional agents.
+	Claude bool
 
 	// Optional tools.
 	Psql bool

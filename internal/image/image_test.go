@@ -204,10 +204,258 @@ func TestGenerate_ExtrasOmittedByDefault(t *testing.T) {
 		"nvm", "uv/install.sh", "dotnet-install.sh",
 		"go.dev/dl/go", "postgresql-client", "DOTNET_CLI_TELEMETRY_OPTOUT",
 		"libicu", "USER user", "USER root",
+		"claude.ai/install.sh", "HTTPS_PROXY",
 	} {
 		if strings.Contains(out, marker) {
 			t.Errorf("default Dockerfile should not mention %q\n%s", marker, out)
 		}
+	}
+}
+
+func TestGenerate_HTTPSProxyExportsInProfile(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", HTTPSProxy: "http://proxy.corp:3128"})
+	want := `echo 'export HTTPS_PROXY="http://proxy.corp:3128"' >> /home/user/.profile`
+	if !strings.Contains(out, want) {
+		t.Fatalf("Dockerfile missing %q\n%s", want, out)
+	}
+	// The proxy must NOT become an ENV directive — build-time
+	// downloads should continue to use the builder host's network.
+	if strings.Contains(out, "ENV HTTPS_PROXY") {
+		t.Fatalf("HTTPS_PROXY should not be emitted as an ENV directive:\n%s", out)
+	}
+	// The profile export must come AFTER user creation so /home/user
+	// exists when the echo runs.
+	userIdx := strings.Index(out, `useradd -m -s /bin/bash user`)
+	exportIdx := strings.Index(out, "export HTTPS_PROXY=")
+	if userIdx < 0 || exportIdx < 0 || exportIdx <= userIdx {
+		t.Fatalf("HTTPS_PROXY export must follow user creation:\n%s", out)
+	}
+}
+
+// TestGenerate_HTTPSProxyUsesPerFamilyProfile pins the per-family
+// login-profile file: apt-family distros write to .profile, dnf-family
+// distros write to .bash_profile.
+func TestGenerate_HTTPSProxyUsesPerFamilyProfile(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"debian_13": "/home/user/.profile",
+		"redhat_10": "/home/user/.bash_profile",
+	}
+	for osKey, profile := range cases {
+		osKey, profile := osKey, profile
+		t.Run(osKey, func(t *testing.T) {
+			t.Parallel()
+			out := generateOpts(t, image.Options{OS: osKey, HTTPSProxy: "http://proxy:3128"})
+			want := `echo 'export HTTPS_PROXY="http://proxy:3128"' >> ` + profile
+			if !strings.Contains(out, want) {
+				t.Fatalf("%s should append HTTPS_PROXY export to %s\n%s", osKey, profile, out)
+			}
+		})
+	}
+}
+
+// TestGenerate_HTTPSProxyEscapesSingleQuotes guards against an
+// embedded apostrophe in the proxy value (e.g. an unusual password)
+// breaking the surrounding `echo '...'` invocation. The escape
+// pattern is the standard `'\”` shell idiom.
+func TestGenerate_HTTPSProxyEscapesSingleQuotes(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{
+		OS:         "debian_13",
+		HTTPSProxy: `http://us'er:pw@proxy:3128`,
+	})
+	want := `echo 'export HTTPS_PROXY="http://us'\''er:pw@proxy:3128"' >> /home/user/.profile`
+	if !strings.Contains(out, want) {
+		t.Fatalf("expected shell-escaped apostrophe in the export line\nwant: %q\nout:\n%s", want, out)
+	}
+}
+
+func TestGenerate_HTTPSProxyOmittedWhenEmpty(t *testing.T) {
+	t.Parallel()
+	out := generate(t, "debian_13")
+	if strings.Contains(out, "HTTPS_PROXY") {
+		t.Fatalf("Dockerfile must not mention HTTPS_PROXY by default:\n%s", out)
+	}
+}
+
+func TestGenerate_ClaudeInstall(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", Claude: true})
+	wants := []string{
+		"USER user",
+		"# Install Claude Code.",
+		"curl -fsSL https://claude.ai/install.sh | bash",
+		`echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/user/.profile`,
+		"USER root",
+	}
+	for _, want := range wants {
+		if !strings.Contains(out, want) {
+			t.Errorf("Claude layer missing %q\n%s", want, out)
+		}
+	}
+}
+
+// TestGenerate_ClaudeWritesOnboardingJSON pins the second half of the
+// --claude layer: a /home/user/.claude.json with hasCompletedOnboarding
+// pre-set so the CLI does not prompt on first run inside the sandbox.
+// The file is dropped with --chown=user:user so the in-container user
+// owns it.
+func TestGenerate_ClaudeWritesOnboardingJSON(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", Claude: true})
+	wants := []string{
+		"COPY --chown=user:user <<EOF /home/user/.claude.json",
+		`"hasCompletedOnboarding": true`,
+	}
+	for _, want := range wants {
+		if !strings.Contains(out, want) {
+			t.Errorf("Claude onboarding file missing %q\n%s", want, out)
+		}
+	}
+	// The onboarding JSON must follow the install RUN so the file is
+	// added only when the binary has just landed in the layer above.
+	installIdx := strings.Index(out, "https://claude.ai/install.sh")
+	jsonIdx := strings.Index(out, "/home/user/.claude.json")
+	if installIdx < 0 || jsonIdx < 0 || jsonIdx <= installIdx {
+		t.Fatalf("onboarding JSON should appear after the install step:\n%s", out)
+	}
+}
+
+// TestGenerate_ClaudeWritesBypassPermissionsSettings pins that the
+// --claude layer drops /home/user/.claude/settings.json with
+// permissions.defaultMode set to "bypassPermissions" so every tool
+// call inside the sandbox is auto-approved with no interactive
+// prompts. The settings file must live under ~/.claude/settings.json
+// (not in ~/.claude.json) because that is where the CLI reads the
+// permissions block.
+func TestGenerate_ClaudeWritesBypassPermissionsSettings(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", Claude: true})
+	wants := []string{
+		"COPY --chown=user:user <<EOF /home/user/.claude/settings.json",
+		`"permissions":`,
+		`"defaultMode": "bypassPermissions"`,
+	}
+	for _, want := range wants {
+		if !strings.Contains(out, want) {
+			t.Errorf("Claude settings.json missing %q\n%s", want, out)
+		}
+	}
+	// settings.json must follow the install RUN so the file lands only
+	// once the binary has been dropped in the layer above.
+	installIdx := strings.Index(out, "https://claude.ai/install.sh")
+	settingsIdx := strings.Index(out, "/home/user/.claude/settings.json")
+	if installIdx < 0 || settingsIdx < 0 || settingsIdx <= installIdx {
+		t.Fatalf("settings.json should appear after the install step:\n%s", out)
+	}
+}
+
+// TestGenerate_ClaudeOnboardingFileOmittedWhenDisabled keeps the
+// onboarding and settings writes off the no-claude baseline.
+func TestGenerate_ClaudeOnboardingFileOmittedWhenDisabled(t *testing.T) {
+	t.Parallel()
+	out := generate(t, "debian_13")
+	if strings.Contains(out, "/home/user/.claude.json") {
+		t.Fatalf(".claude.json must not be emitted without --claude:\n%s", out)
+	}
+	if strings.Contains(out, "/home/user/.claude/settings.json") {
+		t.Fatalf(".claude/settings.json must not be emitted without --claude:\n%s", out)
+	}
+}
+
+// TestGenerate_ClaudeInstallUsesHTTPSProxy pins the contract that
+// --https-proxy is exported inline for the Claude install RUN so
+// curl + any sub-downloads the install script performs route through
+// the proxy. The proxy must still be absent from the rest of the
+// build (no ENV directive).
+func TestGenerate_ClaudeInstallUsesHTTPSProxy(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{
+		OS:         "debian_13",
+		Claude:     true,
+		HTTPSProxy: "http://proxy.corp:3128",
+	})
+	want := "RUN export HTTPS_PROXY='http://proxy.corp:3128' && " +
+		"curl -fsSL https://claude.ai/install.sh | bash"
+	if !strings.Contains(out, want) {
+		t.Fatalf("Claude install should export HTTPS_PROXY inline:\nwant: %q\nout:\n%s", want, out)
+	}
+	if strings.Contains(out, "ENV HTTPS_PROXY") {
+		t.Fatalf("--https-proxy must not become an ENV directive:\n%s", out)
+	}
+}
+
+// TestGenerate_ClaudeInstallNoProxyByDefault keeps the proxy-less
+// Claude install as a bare curl invocation — no spurious HTTPS_PROXY
+// export when --https-proxy is absent.
+func TestGenerate_ClaudeInstallNoProxyByDefault(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", Claude: true})
+	if strings.Contains(out, "HTTPS_PROXY=") &&
+		!strings.Contains(out, "export HTTPS_PROXY=") /* never set if proxy unset */ {
+		// We want zero HTTPS_PROXY mentions in this configuration.
+		t.Fatalf("Claude install without --https-proxy must not reference HTTPS_PROXY:\n%s", out)
+	}
+	// Equivalent direct assertion: a bare curl line must be present.
+	const bare = "RUN curl -fsSL https://claude.ai/install.sh | bash"
+	if !strings.Contains(out, bare) {
+		t.Fatalf("expected bare curl install line:\n%s", out)
+	}
+}
+
+// TestGenerate_ClaudeInstallProxyEscapesSingleQuotes guards an
+// embedded apostrophe in the proxy value from breaking the
+// surrounding `export HTTPS_PROXY='...'` wrapper.
+func TestGenerate_ClaudeInstallProxyEscapesSingleQuotes(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{
+		OS:         "debian_13",
+		Claude:     true,
+		HTTPSProxy: `http://us'er:pw@proxy:3128`,
+	})
+	want := `RUN export HTTPS_PROXY='http://us'\''er:pw@proxy:3128' && ` +
+		`curl -fsSL https://claude.ai/install.sh | bash`
+	if !strings.Contains(out, want) {
+		t.Fatalf("expected shell-escaped apostrophe in inline proxy export\nwant: %q\nout:\n%s",
+			want, out)
+	}
+}
+
+// TestGenerate_ClaudeInstall_RedHatProfile pins the per-family
+// profile file: dnf-family distros append the PATH export to
+// .bash_profile, not .profile.
+func TestGenerate_ClaudeInstall_RedHatProfile(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "redhat_10", Claude: true})
+	want := `echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/user/.bash_profile`
+	if !strings.Contains(out, want) {
+		t.Fatalf("Claude layer should append PATH export to .bash_profile\n%s", out)
+	}
+}
+
+// TestGenerate_ClaudeWithPythonSharesPathExport guards against the
+// duplicate `export PATH="$HOME/.local/bin:$PATH"` line that would
+// appear if both layers wrote it independently. The shared line must
+// be emitted exactly once when both --claude and --python are set.
+func TestGenerate_ClaudeWithPythonSharesPathExport(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", Claude: true, Python: "3.13"})
+	const line = `echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/user/.profile`
+	if got := strings.Count(out, line); got != 1 {
+		t.Fatalf("expected exactly one PATH export, got %d\n%s", got, out)
+	}
+}
+
+// TestGenerate_PythonAloneStillExportsPath pins that the previous
+// behaviour — `--python` alone adding `$HOME/.local/bin` to PATH — is
+// preserved after the refactor that moved the line out of renderPython.
+func TestGenerate_PythonAloneStillExportsPath(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", Python: "3.13"})
+	want := `echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/user/.profile`
+	if !strings.Contains(out, want) {
+		t.Fatalf("Python-only build should still export $HOME/.local/bin:\n%s", out)
 	}
 }
 

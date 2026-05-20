@@ -144,6 +144,7 @@ func TestCreate_HelpShowsSupportedSections(t *testing.T) {
 		"Languages:",
 		"Agents:",
 		"Tools:",
+		"Network:",
 		"podman, docker",
 		"debian_12",
 		"ubuntu_24",
@@ -152,9 +153,11 @@ func TestCreate_HelpShowsSupportedSections(t *testing.T) {
 		"24, 25, 26",
 		"1.26.0",
 		"Claude Code",
+		"--claude-credentials",
 		"OpenAI Codex CLI",
 		"opencode",
 		"PostgreSQL",
+		"--https-proxy=URL",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("create --help missing %q", want)
@@ -212,12 +215,14 @@ func TestCreate_FlagOrderMatchesSpec(t *testing.T) {
 		"--remote",
 		"--instance-key",
 		"--rebuild",
+		"--https-proxy",
 		"--os",
 		"--python",
 		"--node",
 		"--golang",
 		"--dotnet",
 		"--claude",
+		"--claude-credentials",
 		"--codex",
 		"--opencode",
 		"--podman",
@@ -257,9 +262,11 @@ func TestCreate_AutoDetectAmbiguous(t *testing.T) {
 
 // TestCreate_RejectsUnsupportedAgentFlags pins the contract that the
 // agent/podman flags fail fast until their installers ship. The flag
-// surface is preserved (they still parse) but invoking them errors out.
+// surface is preserved (they still parse) but invoking them errors
+// out. `--claude` has shipped — it is exercised by its own tests —
+// so it is not in this list.
 func TestCreate_RejectsUnsupportedAgentFlags(t *testing.T) {
-	for _, flag := range []string{"--claude", "--codex", "--opencode", "--podman"} {
+	for _, flag := range []string{"--codex", "--opencode", "--podman"} {
 		flag := flag
 		t.Run(flag, func(t *testing.T) {
 			home := withFakeHome(t)
@@ -286,11 +293,32 @@ func TestCreate_RejectsUnsupportedAgentFlags_NamesAll(t *testing.T) {
 
 	var so, se bytes.Buffer
 	code := cli.Run(context.Background(),
-		[]string{"create", "demo", "--claude", "--codex"}, &so, &se)
+		[]string{"create", "demo", "--codex", "--opencode"}, &so, &se)
 	if code == 0 {
 		t.Fatalf("exit = 0, want non-zero when multiple unsupported flags are set")
 	}
-	for _, want := range []string{"--claude", "--codex", "not yet supported"} {
+	for _, want := range []string{"--codex", "--opencode", "not yet supported"} {
+		if !strings.Contains(se.String(), want) {
+			t.Errorf("stderr should mention %q, got:\n%s", want, se.String())
+		}
+	}
+}
+
+// TestCreate_ClaudeCredentialsRequiresClaude pins the contract that
+// --claude-credentials cannot be used without --claude — pushing
+// credentials to an instance with no Claude install is meaningless and
+// should fail before any orchestrator command runs.
+func TestCreate_ClaudeCredentialsRequiresClaude(t *testing.T) {
+	home := withFakeHome(t)
+	writePub(t, home, "id_ed25519.pub", "ssh-ed25519 AAAA k")
+
+	var so, se bytes.Buffer
+	code := cli.Run(context.Background(),
+		[]string{"create", "demo", "--claude-credentials"}, &so, &se)
+	if code == 0 {
+		t.Fatalf("exit = 0, want non-zero when --claude-credentials is used without --claude")
+	}
+	for _, want := range []string{"--claude-credentials", "--claude"} {
 		if !strings.Contains(se.String(), want) {
 			t.Errorf("stderr should mention %q, got:\n%s", want, se.String())
 		}

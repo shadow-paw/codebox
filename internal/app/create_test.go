@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -77,8 +79,16 @@ func (f *fakeRunner) Run(_ context.Context, shellCmd string,
 // returned *fakeRunner is the recorder; tests inspect its calls.
 func newApp(t *testing.T, keys *stubKeys, replies ...reply) (*app.App, *fakeRunner) {
 	t.Helper()
+	return newAppWithHome(t, "/home/op", keys, replies...)
+}
+
+// newAppWithHome is newApp with an explicit home directory, so tests
+// that need ~ expansion to land on a real path (e.g. credentials
+// transfer) can point at a t.TempDir().
+func newAppWithHome(t *testing.T, home string, keys *stubKeys, replies ...reply) (*app.App, *fakeRunner) {
+	t.Helper()
 	r := &fakeRunner{replies: replies}
-	a := app.NewWith("/home/op", keys, func(host string) app.CommandRunner {
+	a := app.NewWith(home, keys, func(host string) app.CommandRunner {
 		r.host = host
 		return r
 	})
@@ -403,4 +413,268 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// TestCreate_HTTPSProxyExportsInProfile threads --https-proxy through
+// the use case and confirms the value lands in the in-container
+// user's login profile via the Dockerfile piped into the build
+// runner. The proxy must NOT become a build-time ENV directive.
+func TestCreate_HTTPSProxyExportsInProfile(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: "other\n"},
+		reply{},
+		reply{},
+	)
+
+	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		HTTPSProxy: "http://proxy.corp:3128",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	want := `echo 'export HTTPS_PROXY="http://proxy.corp:3128"' >> /home/user/.profile`
+	if !strings.Contains(fr.calls[1].stdin, want) {
+		t.Fatalf("build stdin missing %q\n%s", want, fr.calls[1].stdin)
+	}
+	if strings.Contains(fr.calls[1].stdin, "ENV HTTPS_PROXY") {
+		t.Fatalf("HTTPS_PROXY must not leak into an ENV directive:\n%s", fr.calls[1].stdin)
+	}
+}
+
+// TestCreate_ClaudeCredentialsRsyncsAfterRun pins the
+// --claude-credentials flow: after the container starts, the
+// use-case layer looks up the host port and runs a credentials rsync
+// (locally) that targets /home/user/.claude/.credentials.json with
+// --mkpath + --chmod=F0600 so the file lands with the right perms in
+// a directory that may not yet exist.
+func TestCreate_ClaudeCredentialsRsyncsAfterRun(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	mustWriteFile(t, filepath.Join(home, ".claude", ".credentials.json"), `{"token":"x"}`)
+
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},         // ps -a — no collision
+		reply{},                          // build
+		reply{stdout: "abc123\n"},        // run — container id
+		reply{stdout: "0.0.0.0:33000\n"}, // port lookup
+		reply{},                          // rsync
+	)
+
+	var out bytes.Buffer
+	err := a.Create(context.Background(), &out, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		ClaudeCredentials: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v\nout:\n%s", err, out.String())
+	}
+
+	if got := len(fr.calls); got != 5 {
+		t.Fatalf("expected 5 runner calls (ps -a, build, run, port, rsync), got %d:\n%+v",
+			got, fr.calls)
+	}
+	if !strings.Contains(fr.calls[3].cmd, "podman port 'demo' 2222") {
+		t.Errorf("call[3] should be port lookup, got %q", fr.calls[3].cmd)
+	}
+	rsync := fr.calls[4].cmd
+	for _, want := range []string{
+		"rsync ",
+		"--mkpath",
+		"--chmod=F0600",
+		"-p 33000",
+		filepath.Join(home, ".claude", ".credentials.json"),
+		"user@localhost:/home/user/.claude/.credentials.json",
+	} {
+		if !strings.Contains(rsync, want) {
+			t.Errorf("rsync command missing %q:\n%s", want, rsync)
+		}
+	}
+	if fr.calls[4].host != "" {
+		t.Errorf("rsync should run on the local host (host=\"\"), got %q", fr.calls[4].host)
+	}
+	if !strings.Contains(out.String(), "Pushing Claude credentials") {
+		t.Errorf("expected a status line about pushing credentials:\n%s", out.String())
+	}
+}
+
+// TestCreate_ClaudeCredentialsMissingFileFailsEarly surfaces the
+// credentials file-not-found case before any orchestrator command
+// runs: we'd rather fail fast than build a multi-GB image and start
+// a container the operator can't use.
+func TestCreate_ClaudeCredentialsMissingFileFailsEarly(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir() // intentionally no ~/.claude/.credentials.json
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"})
+
+	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		ClaudeCredentials: true,
+	})
+	if err == nil {
+		t.Fatal("expected error when credentials file is absent")
+	}
+	if !strings.Contains(err.Error(), "--claude-credentials") {
+		t.Errorf("error should name the flag, got %v", err)
+	}
+	if len(fr.calls) != 0 {
+		t.Errorf("no orchestrator command should run when credentials file is missing; got %d calls",
+			len(fr.calls))
+	}
+}
+
+// TestCreate_ClaudeCredentialsRemoteAddsJump pins the ProxyJump wiring
+// on the credentials rsync: when --remote is set, the inner ssh
+// transport carries `-J user@host` so the local rsync connects to the
+// container's published port through the bastion.
+func TestCreate_ClaudeCredentialsRemoteAddsJump(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	mustWriteFile(t, filepath.Join(home, ".claude", ".credentials.json"), `{"token":"x"}`)
+
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},
+		reply{},
+		reply{},
+		reply{stdout: "0.0.0.0:44000\n"},
+		reply{},
+	)
+	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Remote:            "ops@bastion",
+		ClaudeCredentials: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if fr.calls[3].host != "ops@bastion" {
+		t.Errorf("port lookup should hit the remote, got host %q", fr.calls[3].host)
+	}
+	if fr.calls[4].host != "" {
+		t.Errorf("rsync should run locally, got host %q", fr.calls[4].host)
+	}
+	if !strings.Contains(fr.calls[4].cmd, `-J '\''ops@bastion'\''`) {
+		t.Errorf("credentials rsync ssh transport should include -J:\n%s", fr.calls[4].cmd)
+	}
+}
+
+// TestCreate_ClaudeCredentialsRetriesOnceOnConnectFailure pins the
+// recovery path for "rsync failed because the in-container sshd isn't
+// ready yet": after the first rsync fails, the use-case layer waits
+// briefly and retries the *exact same* command once. The wait is
+// driven by a tunable package variable so tests don't pay the real
+// wall-clock cost.
+func TestCreate_ClaudeCredentialsRetriesOnceOnConnectFailure(t *testing.T) {
+	// No t.Parallel: this test mutates the package-level retry delay
+	// via SetClaudeCredentialsRetryDelayForTest. Running it in parallel
+	// with TestCreate_ClaudeCredentialsBothAttemptsFailSurfacesError
+	// (which mutates the same global) races on that variable.
+	restore := app.SetClaudeCredentialsRetryDelayForTest(0)
+	t.Cleanup(restore)
+
+	home := t.TempDir()
+	mustWriteFile(t, filepath.Join(home, ".claude", ".credentials.json"), `{"token":"x"}`)
+
+	rsyncErr := &exec.ExitError{}
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},         // ps -a
+		reply{},                          // build
+		reply{stdout: "abc123\n"},        // run
+		reply{stdout: "0.0.0.0:33000\n"}, // port lookup
+		reply{err: rsyncErr, stderr: "Connection refused\n"}, // rsync — fails
+		reply{}, // rsync retry — succeeds
+	)
+
+	var out bytes.Buffer
+	err := a.Create(context.Background(), &out, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		ClaudeCredentials: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v\nout:\n%s", err, out.String())
+	}
+	if got := len(fr.calls); got != 6 {
+		t.Fatalf("expected 6 runner calls (ps, build, run, port, rsync, rsync-retry), got %d:\n%+v",
+			got, fr.calls)
+	}
+	if fr.calls[4].cmd != fr.calls[5].cmd {
+		t.Errorf("retry should re-issue the exact same rsync command:\n first: %q\nsecond: %q",
+			fr.calls[4].cmd, fr.calls[5].cmd)
+	}
+	if !strings.Contains(out.String(), "retrying once") {
+		t.Errorf("expected a retry-explanation line in stdout:\n%s", out.String())
+	}
+}
+
+// TestCreate_ClaudeCredentialsBothAttemptsFailSurfacesError pins the
+// give-up path: if the retry fails too, the second error is what the
+// caller sees and no extra attempts are made.
+func TestCreate_ClaudeCredentialsBothAttemptsFailSurfacesError(t *testing.T) {
+	// No t.Parallel: see TestCreate_ClaudeCredentialsRetriesOnceOnConnectFailure
+	// — both tests mutate the same package-level retry delay.
+	restore := app.SetClaudeCredentialsRetryDelayForTest(0)
+	t.Cleanup(restore)
+
+	home := t.TempDir()
+	mustWriteFile(t, filepath.Join(home, ".claude", ".credentials.json"), `{"token":"x"}`)
+
+	first := &exec.ExitError{}
+	second := &exec.ExitError{}
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},
+		reply{},
+		reply{stdout: "abc123\n"},
+		reply{stdout: "0.0.0.0:33000\n"},
+		reply{err: first, stderr: "Connection refused\n"},
+		reply{err: second, stderr: "Connection refused\n"},
+	)
+
+	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		ClaudeCredentials: true,
+	})
+	if err == nil {
+		t.Fatal("expected error when both rsync attempts fail")
+	}
+	if got := len(fr.calls); got != 6 {
+		t.Errorf("expected exactly one retry (6 total calls), got %d:\n%+v", got, fr.calls)
+	}
+}
+
+// TestCreate_ClaudeFlagDoesNotImplyCredentialsRsync keeps --claude and
+// --claude-credentials decoupled: setting only --claude must not push
+// any credentials.
+func TestCreate_ClaudeFlagDoesNotImplyCredentialsRsync(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},
+		reply{},
+		reply{},
+	)
+	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Claude: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := len(fr.calls); got != 3 {
+		t.Errorf("--claude alone should not trigger a port lookup or rsync; got %d calls", got)
+	}
+	if !strings.Contains(fr.calls[1].stdin, "https://claude.ai/install.sh") {
+		t.Errorf("--claude should embed the Claude installer in the Dockerfile:\n%s",
+			fr.calls[1].stdin)
+	}
+}
+
+func mustWriteFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
 }

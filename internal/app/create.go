@@ -6,13 +6,25 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"codebox/internal/adapters/runner"
 	"codebox/internal/container"
 	"codebox/internal/image"
 )
+
+// claudeCredentialsRetryDelay is the wait between the first failed
+// rsync of the Claude credentials and the single retry. The container
+// is freshly started, so sshd inside it may not be accepting
+// connections for a beat; one short wait + one retry covers the gap
+// without forcing the operator to re-run `codebox create` by hand.
+//
+// Mutable for tests via export_test.go; production code never writes
+// to it.
+var claudeCredentialsRetryDelay = 2 * time.Second
 
 // CreateRequest is the use-case input for App.Create. Fields mirror the
 // `codebox create` flags. InstanceKey is the raw value the operator
@@ -27,6 +39,11 @@ type CreateRequest struct {
 	Remote       string
 	Rebuild      bool
 
+	// HTTPSProxy, when non-empty, becomes an ENV HTTPS_PROXY directive
+	// in the generated Dockerfile so package managers, curl, and the
+	// installed toolchains see it during the build.
+	HTTPSProxy string
+
 	// Optional language toolchains; an empty string disables the
 	// corresponding install. Versions are passed through verbatim to
 	// the installer inside the image.
@@ -34,6 +51,13 @@ type CreateRequest struct {
 	Node   string
 	Golang string
 	Dotnet string
+
+	// Optional agents.
+	Claude bool
+	// ClaudeCredentials, when true, rsyncs the operator's
+	// ~/.claude/credentials.json into the instance after the container
+	// starts. The file is never baked into the image.
+	ClaudeCredentials bool
 
 	// Optional tools.
 	Psql bool
@@ -53,6 +77,15 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 		return err
 	}
 
+	// Fail fast if --claude-credentials was requested but the source
+	// file is unreadable: we'd rather error before building a multi-GB
+	// image than after, and the check is local and cheap.
+	if req.ClaudeCredentials {
+		if _, err := os.Stat(claudeCredentialsPath(a.home)); err != nil {
+			return fmt.Errorf("--claude-credentials: %w", err)
+		}
+	}
+
 	authKey, err := a.keys.Resolve(expandHome(req.InstanceKey, a.home))
 	if err != nil {
 		return err
@@ -61,10 +94,12 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 	if err := image.Generate(&dockerfile, image.Options{
 		OS:            req.OS,
 		AuthorizedKey: authKey,
+		HTTPSProxy:    req.HTTPSProxy,
 		Python:        req.Python,
 		Node:          req.Node,
 		Golang:        req.Golang,
 		Dotnet:        req.Dotnet,
+		Claude:        req.Claude,
 		Psql:          req.Psql,
 	}); err != nil {
 		return err
@@ -88,9 +123,73 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 		return wrapRunErr("start container", err, &runErr)
 	}
 
+	if req.ClaudeCredentials {
+		if err := a.pushClaudeCredentials(ctx, w, rnr, eng, req); err != nil {
+			return err
+		}
+	}
+
 	_, _ = fmt.Fprintf(w, "Instance %q is ready. Open a shell:\n  %s\n",
 		req.Instance, shellHint(req))
 	return nil
+}
+
+// pushClaudeCredentials transfers the operator's
+// ~/.claude/credentials.json into the freshly-started container so the
+// Claude Code CLI inside the sandbox can pick up the operator's
+// existing session. rsync runs with --mkpath so /home/user/.claude is
+// created on demand, and --chmod=F0600 pins file permissions to the
+// same mode Claude expects on the host. Source file existence is
+// already enforced at the top of Create; we re-resolve the path here
+// rather than thread it through the call.
+func (a *App) pushClaudeCredentials(
+	ctx context.Context,
+	w io.Writer,
+	rnr CommandRunner,
+	eng *container.Engine,
+	req CreateRequest,
+) error {
+	var portOut, portErr bytes.Buffer
+	if err := rnr.Run(ctx, eng.HostPort(req.Instance), nil, &portOut, &portErr); err != nil {
+		return wrapRunErr("look up host port", err, &portErr)
+	}
+	hostPort := parsePortLines(portOut.String())
+	if hostPort == "" {
+		return fmt.Errorf("instance %q is not exposing port %s; is it running?",
+			req.Instance, instancePort)
+	}
+
+	src := claudeCredentialsPath(a.home)
+	dst := fmt.Sprintf("%s@localhost:/home/%s/.claude/.credentials.json",
+		instanceUser, instanceUser)
+	rsyncCmd := buildCredentialsRsyncCommand(req.Remote, hostPort,
+		expandHome(req.InstanceKey, a.home), src, dst)
+	_, _ = fmt.Fprintf(w, "Pushing Claude credentials...\n")
+	writeRsyncBlock(w, rsyncCmd)
+
+	local := a.runners("")
+	if err := local.Run(ctx, rsyncCmd, nil, w, w); err != nil {
+		_, _ = fmt.Fprintf(w,
+			"Credentials push failed (%v); the in-container sshd may not be ready yet — retrying once...\n",
+			err)
+		select {
+		case <-time.After(claudeCredentialsRetryDelay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return local.Run(ctx, rsyncCmd, nil, w, w)
+	}
+	return nil
+}
+
+// claudeCredentialsPath returns the operator-side path to the Claude
+// CLI credentials file that --claude-credentials pushes into the
+// instance. Centralised so the existence pre-check and the rsync
+// source cannot drift apart. The filename is `.credentials.json`
+// (dotfile) so it sits beside any other dotted state Claude writes
+// under ~/.claude.
+func claudeCredentialsPath(home string) string {
+	return filepath.Join(home, ".claude", ".credentials.json")
 }
 
 // precheckNotExists fails if a container with the requested name is

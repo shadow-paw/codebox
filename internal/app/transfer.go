@@ -184,6 +184,44 @@ func buildRsyncCommand(remote, hostPort, instanceKey, src, dst string) string {
 	return strings.Join(parts, " ")
 }
 
+// buildCredentialsRsyncCommand assembles the rsync command used by
+// App.Create to push the operator's ~/.claude/credentials.json into
+// the freshly-started container. It is identical to buildRsyncCommand
+// except for two add-ons that matter when the destination is a
+// known-sensitive single file deep in the user's home:
+//
+//   - --mkpath so /home/user/.claude is created on the receiving side
+//     when it does not yet exist (rsync >= 3.2.3, which all base
+//     images ship).
+//   - --chmod=F0600 so the credentials file lands with the same mode
+//     Claude expects on the host, regardless of the source's perms.
+func buildCredentialsRsyncCommand(remote, hostPort, instanceKey, src, dst string) string {
+	sshParts := []string{"ssh", "-o", "StrictHostKeyChecking=no"}
+	if instanceKey != "" {
+		sshParts = append(sshParts, "-i", shquote(instanceKey))
+	}
+	if remote != "" {
+		sshParts = append(sshParts, "-J", shquote(remote))
+	}
+	sshParts = append(sshParts, "-p", hostPort)
+	sshCmd := strings.Join(sshParts, " ")
+
+	parts := []string{
+		"rsync",
+		"--verbose",
+		"--archive",
+		"--compress",
+		"--update",
+		"--progress",
+		"--mkpath",
+		"--chmod=F0600",
+		"-e", shquote(sshCmd),
+		shquote(src),
+		shquote(dst),
+	}
+	return strings.Join(parts, " ")
+}
+
 const (
 	rsyncTopBar    = "──────── rsync ───────────────────────────────────────────────"
 	rsyncBottomBar = "──────────────────────────────────────────────────────────────"

@@ -13,21 +13,23 @@ import (
 )
 
 type createOpts struct {
-	instance     string
-	orchestrator string
-	remote       string
-	instanceKey  string
-	rebuild      bool
-	osImage      string
-	python       string
-	node         string
-	golang       string
-	dotnet       string
-	claude       bool
-	codex        bool
-	opencode     bool
-	podman       bool
-	psql         bool
+	instance          string
+	orchestrator      string
+	remote            string
+	instanceKey       string
+	rebuild           bool
+	httpsProxy        string
+	osImage           string
+	python            string
+	node              string
+	golang            string
+	dotnet            string
+	claude            bool
+	claudeCredentials bool
+	codex             bool
+	opencode          bool
+	podman            bool
+	psql              bool
 }
 
 const createHelpFooter = `
@@ -48,13 +50,18 @@ Languages:
   --dotnet   8, 10
 
 Agents:
-  --claude     Claude Code
-  --codex      OpenAI Codex CLI
-  --opencode   opencode
+  --claude               Claude Code (also writes /home/user/.claude.json onboarding flag)
+  --claude-credentials   Copy ~/.claude/.credentials.json into the instance (requires --claude)
+  --codex                OpenAI Codex CLI
+  --opencode             opencode
 
 Tools:
   --podman   Rootless Podman (inside the instance)
   --psql     psql PostgreSQL client
+
+Network:
+  --https-proxy=URL   Export HTTPS_PROXY=URL from the in-container user login profile
+                      (also exported during the Claude install so the curl pipeline routes through it)
 `
 
 const createHelpTemplate = `{{with (or .Long .Short)}}{{. | trimTrailingWhitespaces}}
@@ -89,6 +96,8 @@ func newCreateCmd() *cobra.Command {
 		"SSH key for logging into the new instance (auto-detected if omitted)")
 	f.BoolVar(&opts.rebuild, "rebuild", false,
 		"Force a rebuild of the base image even if a cached one exists")
+	f.StringVar(&opts.httpsProxy, "https-proxy", "",
+		"Export HTTPS_PROXY=URL from the in-container user login profile (also used to install Claude)")
 	f.StringVar(&opts.osImage, "os", "debian_13",
 		"Base OS image (debian_12, debian_13, ubuntu_24, ubuntu_26, redhat_10)")
 	f.StringVar(&opts.python, "python", "",
@@ -101,6 +110,8 @@ func newCreateCmd() *cobra.Command {
 		"Install .NET at this version (8, 10)")
 	f.BoolVar(&opts.claude, "claude", false,
 		"Install Claude Code")
+	f.BoolVar(&opts.claudeCredentials, "claude-credentials", false,
+		"Copy ~/.claude/.credentials.json into the instance after it starts (requires --claude)")
 	f.BoolVar(&opts.codex, "codex", false,
 		"Install OpenAI Codex CLI")
 	f.BoolVar(&opts.opencode, "opencode", false,
@@ -118,22 +129,28 @@ func runCreate(ctx context.Context, out io.Writer, opts createOpts) error {
 	if err := rejectUnsupportedFlags(opts); err != nil {
 		return err
 	}
+	if opts.claudeCredentials && !opts.claude {
+		return fmt.Errorf("--claude-credentials requires --claude")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("locate home directory: %w", err)
 	}
 	return app.New(home).Create(ctx, out, app.CreateRequest{
-		Instance:     opts.instance,
-		Orchestrator: opts.orchestrator,
-		OS:           opts.osImage,
-		InstanceKey:  opts.instanceKey,
-		Remote:       opts.remote,
-		Rebuild:      opts.rebuild,
-		Python:       opts.python,
-		Node:         opts.node,
-		Golang:       opts.golang,
-		Dotnet:       opts.dotnet,
-		Psql:         opts.psql,
+		Instance:          opts.instance,
+		Orchestrator:      opts.orchestrator,
+		OS:                opts.osImage,
+		InstanceKey:       opts.instanceKey,
+		Remote:            opts.remote,
+		Rebuild:           opts.rebuild,
+		HTTPSProxy:        opts.httpsProxy,
+		Python:            opts.python,
+		Node:              opts.node,
+		Golang:            opts.golang,
+		Dotnet:            opts.dotnet,
+		Claude:            opts.claude,
+		ClaudeCredentials: opts.claudeCredentials,
+		Psql:              opts.psql,
 	})
 }
 
@@ -144,9 +161,6 @@ func runCreate(ctx context.Context, out io.Writer, opts createOpts) error {
 // without the requested tool.
 func rejectUnsupportedFlags(opts createOpts) error {
 	var names []string
-	if opts.claude {
-		names = append(names, "--claude")
-	}
 	if opts.codex {
 		names = append(names, "--codex")
 	}

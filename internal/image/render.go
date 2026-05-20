@@ -103,6 +103,9 @@ func renderExtras(b *strings.Builder, s spec, opts Options) {
 	}
 
 	profile := s.family.profilePath()
+	if proxy := strings.TrimSpace(opts.HTTPSProxy); proxy != "" {
+		renderHTTPSProxy(b, proxy, profile)
+	}
 	if opts.Golang != "" {
 		renderGolang(b, opts.Golang, profile)
 	}
@@ -110,12 +113,20 @@ func renderExtras(b *strings.Builder, s spec, opts Options) {
 		renderDotnet(b, opts.Dotnet, profile)
 	}
 
-	needsUser := opts.Python != "" || opts.Node != ""
+	needsUser := opts.Python != "" || opts.Node != "" || opts.Claude
 	if needsUser {
 		b.WriteString("USER user\n\n")
 	}
+	// uv (Python) and the Claude installer both drop binaries under
+	// $HOME/.local/bin; emit the PATH export once if either is enabled.
+	if opts.Python != "" || opts.Claude {
+		fmt.Fprintf(b, "RUN echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> %s\n\n", profile)
+	}
 	if opts.Python != "" {
-		renderPython(b, opts.Python, profile)
+		renderPython(b, opts.Python)
+	}
+	if opts.Claude {
+		renderClaude(b, strings.TrimSpace(opts.HTTPSProxy))
 	}
 	if opts.Node != "" {
 		renderNode(b, opts.Node)
@@ -159,15 +170,76 @@ func renderDotnet(b *strings.Builder, version, profile string) {
 
 // renderPython installs uv and pins the requested Python version
 // globally. uv installs to $HOME/.local/bin and downloads a prebuilt
-// CPython, so no system build dependencies are needed. The login
-// profile exports $HOME/.local/bin onto PATH so `uv` is on the
-// operator's shell.
-func renderPython(b *strings.Builder, version, profile string) {
+// CPython, so no system build dependencies are needed. The
+// $HOME/.local/bin PATH export is emitted once by renderExtras so the
+// directory is on PATH for any caller that lands a binary there.
+func renderPython(b *strings.Builder, version string) {
 	b.WriteString("# Install uv and pin the requested Python version globally.\n")
 	b.WriteString("RUN curl -LsSf https://astral.sh/uv/install.sh | sh\n")
-	fmt.Fprintf(b, "RUN echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> %s\n", profile)
 	fmt.Fprintf(b, "RUN /home/user/.local/bin/uv python install %s && \\\n", version)
 	fmt.Fprintf(b, "    /home/user/.local/bin/uv python pin --global %s\n\n", version)
+}
+
+// renderClaude installs Claude Code via Anthropic's native installer.
+// The installer drops the `claude` binary into $HOME/.local/bin; the
+// PATH export is emitted once by renderExtras so the binary is on the
+// operator's shell. Credentials are *not* baked into the image — they
+// are pushed in afterwards by App.Create when --claude-credentials is
+// set.
+//
+// When httpsProxy is non-empty the proxy is exported inline so curl
+// (and any sub-downloads the install script performs) routes through
+// it; the proxy is *not* emitted as a global ENV directive, so other
+// build steps continue to use the builder host's network.
+//
+// The layer also drops two pre-seeded config files so the CLI runs
+// non-interactively inside the sandbox:
+//
+//   - /home/user/.claude.json with hasCompletedOnboarding so the
+//     first-run prompt is skipped.
+//   - /home/user/.claude/settings.json with permissions.defaultMode
+//     set to "bypassPermissions" so every tool call is auto-approved.
+//     The sandbox is the trust boundary; the CLI must not gate actions
+//     behind interactive prompts inside it.
+func renderClaude(b *strings.Builder, httpsProxy string) {
+	b.WriteString("# Install Claude Code.\n")
+	if httpsProxy == "" {
+		b.WriteString("RUN curl -fsSL https://claude.ai/install.sh | bash\n\n")
+	} else {
+		escaped := strings.ReplaceAll(httpsProxy, "'", `'\''`)
+		fmt.Fprintf(b,
+			"RUN export HTTPS_PROXY='%s' && curl -fsSL https://claude.ai/install.sh | bash\n\n",
+			escaped,
+		)
+	}
+	b.WriteString("# Pre-seed the Claude onboarding flag so the CLI does not prompt on first run.\n")
+	b.WriteString("COPY --chown=user:user <<EOF /home/user/.claude.json\n")
+	b.WriteString("{\n")
+	b.WriteString("  \"hasCompletedOnboarding\": true\n")
+	b.WriteString("}\n")
+	b.WriteString("EOF\n\n")
+	b.WriteString("# Auto-approve every tool call inside the sandbox.\n")
+	b.WriteString("RUN install -d -m 0700 -o user -g user /home/user/.claude\n")
+	b.WriteString("COPY --chown=user:user <<EOF /home/user/.claude/settings.json\n")
+	b.WriteString("{\n")
+	b.WriteString("  \"permissions\": {\n")
+	b.WriteString("    \"defaultMode\": \"bypassPermissions\"\n")
+	b.WriteString("  }\n")
+	b.WriteString("}\n")
+	b.WriteString("EOF\n\n")
+}
+
+// renderHTTPSProxy appends `export HTTPS_PROXY="<value>"` to the
+// operator's login profile so interactive shells inside the instance
+// route HTTPS through the configured proxy. The proxy is *not* set as
+// an ENV directive — image build time downloads continue to use the
+// builder host's network, only the in-container shell sees the proxy.
+// Single quotes in the value are shell-escaped so the surrounding
+// `echo '...'` invocation survives an embedded apostrophe.
+func renderHTTPSProxy(b *strings.Builder, value, profile string) {
+	escaped := strings.ReplaceAll(value, "'", `'\''`)
+	b.WriteString("# HTTPS proxy for interactive shells inside the instance.\n")
+	fmt.Fprintf(b, "RUN echo 'export HTTPS_PROXY=\"%s\"' >> %s\n\n", escaped, profile)
 }
 
 // renderNode installs nvm and the requested Node major version. The
