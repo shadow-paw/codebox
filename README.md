@@ -47,17 +47,19 @@ install -m 0755 bin/codebox /usr/local/bin/codebox
 
 ## Usage
 
-See [`doc/command.md`](doc/command.md) for the full CLI reference —
-invocation, subcommands, flags, defaults, and exit codes.
-
-Available `make` targets:
+A typical end-to-end flow:
 
 ```sh
-make deps      # download and tidy module dependencies
-make format    # format all sources at 120 cols (golines + gofmt)
-make lint      # run golangci-lint
-make test      # run unit tests (race detector + coverage)
-make audit     # govulncheck + go mod verify
-make build     # produce ./bin/codebox (default target)
-make clean     # remove build artefacts
+cd my-repo
+codebox create demo --python=3.14 --claude      # start sandbox with Python 3.14 & Claude Code
+codebox git push demo origin/main:issue-1234    # origin/main → ~/source as issue-1234
+codebox shell demo                              # ssh in
+# inside the sandbox: let Claude (or you) write the commits
+codebox git pull demo issue-1234                # issue-1234 → demo/issue-1234
+codebox delete demo                             # stop and remove the sandbox
 ```
+
+For the full picture:
+
+- [`doc/command.md`](doc/command.md) — CLI reference: invocation, subcommands, flags, defaults, exit codes.
+- [`doc/git.md`](doc/git.md) — the clone-push-shell-commit-pull workflow with worked examples.

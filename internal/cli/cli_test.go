@@ -107,6 +107,78 @@ func TestPullPush_HelpListsFlags(t *testing.T) {
 	}
 }
 
+// TestGit_HelpListsPushAndPull guards the cobra wiring for the
+// `git` parent command and its two children. The behaviour is covered
+// at the app layer; this guard ensures the surface stays visible.
+func TestGit_HelpListsPushAndPull(t *testing.T) {
+	t.Parallel()
+	stdout, _ := runCLI(t, []string{"git", "--help"})
+	for _, want := range []string{"push", "pull"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("git --help missing subcommand %q\n%s", want, stdout)
+		}
+	}
+}
+
+// TestGit_RejectsNonGitCwd guards the pre-check: push and pull
+// both refuse to run from a directory that has no `.git` directory.
+// The check happens at the CLI layer so the operator never reaches
+// the orchestrator with a half-set-up local repo.
+func TestGit_RejectsNonGitCwd(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"push", []string{"git", "push", "demo", "origin/main:work"}},
+		{"pull", []string{"git", "pull", "demo", "work"}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			var so, se bytes.Buffer
+			code := cli.Run(context.Background(), tc.args, &so, &se)
+			if code == 0 {
+				t.Fatalf("exit = 0, want non-zero when cwd is not a git repo\nstderr=%s",
+					se.String())
+			}
+			if !strings.Contains(se.String(), "not a git repository") {
+				t.Errorf("stderr should mention 'not a git repository', got:\n%s",
+					se.String())
+			}
+		})
+	}
+}
+
+// TestGitPushPull_HelpListsFlags pins the flag order each git
+// subcommand exposes.
+func TestGitPushPull_HelpListsFlags(t *testing.T) {
+	t.Parallel()
+	cases := map[string][]string{
+		"git push": {"--orchestrator", "--remote", "--instance-key"},
+		"git pull": {"--orchestrator", "--remote", "--instance-key"},
+	}
+	for cmd, wants := range cases {
+		cmd, wants := cmd, wants
+		t.Run(cmd, func(t *testing.T) {
+			t.Parallel()
+			args := append(strings.Split(cmd, " "), "--help")
+			stdout, _ := runCLI(t, args)
+			prev := -1
+			for _, flag := range wants {
+				pos := strings.Index(stdout, flag)
+				if pos == -1 {
+					t.Fatalf("%s --help missing flag %q\n%s", cmd, flag, stdout)
+				}
+				if pos <= prev {
+					t.Fatalf("%s --help flag %q out of order\n%s", cmd, flag, stdout)
+				}
+				prev = pos
+			}
+		})
+	}
+}
+
 // TestExec_SuppressesBanner ensures `codebox exec` produces no banner
 // header. exec's stdout is meant to be piped into other tools, so a
 // decorative banner would corrupt the stream. The exec invocation here

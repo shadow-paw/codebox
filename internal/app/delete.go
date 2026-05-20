@@ -59,7 +59,8 @@ func (a *App) Delete(ctx context.Context, w io.Writer, req DeleteRequest) error 
 	if err := rnr.Run(ctx, eng.Untag(req.Instance), nil, &untagOut, &untagErr); err != nil {
 		return wrapRunErr("untag image", err, &untagErr)
 	}
-	return nil
+
+	return removeLocalRemote(ctx, w, a.runners(""), instanceRemoteName(req.Instance))
 }
 
 // requireExists fails with a "not found" error if the named container

@@ -21,6 +21,7 @@ func TestDelete_HappyPath_StopRemoveUntag(t *testing.T) {
 		reply{stdout: "demo\n"},                            // stop — podman echoes name
 		reply{stdout: "demo\n"},                            // rm — podman echoes name
 		reply{stdout: "untagged: localhost/demo:latest\n"}, // untag chatter
+		reply{err: &exec.ExitError{}},                      // git remote get-url — absent
 	)
 
 	var out bytes.Buffer
@@ -32,8 +33,8 @@ func TestDelete_HappyPath_StopRemoveUntag(t *testing.T) {
 		t.Fatalf("Delete: %v\nout:\n%s", err, out.String())
 	}
 
-	if got := len(fr.calls); got != 5 {
-		t.Fatalf("expected 5 runner calls (ps-a, ps, stop, rm, untag), got %d: %+v", got, fr.calls)
+	if got := len(fr.calls); got != 6 {
+		t.Fatalf("expected 6 runner calls (ps-a, ps, stop, rm, untag, git get-url), got %d: %+v", got, fr.calls)
 	}
 	wantSubstrings := []string{
 		"podman ps -a --format",
@@ -41,11 +42,15 @@ func TestDelete_HappyPath_StopRemoveUntag(t *testing.T) {
 		"podman stop 'demo'",
 		"podman rm 'demo'",
 		"podman untag 'demo'",
+		"git remote get-url 'codebox-demo'",
 	}
 	for i, want := range wantSubstrings {
 		if !strings.Contains(fr.calls[i].cmd, want) {
 			t.Errorf("call[%d] should contain %q, got %q", i, want, fr.calls[i].cmd)
 		}
+	}
+	if strings.Contains(out.String(), "Removing local git remote") {
+		t.Errorf("absent remote should not produce a removal progress line:\n%s", out.String())
 	}
 
 	if !strings.Contains(out.String(), `Stopping container "demo"`) {
@@ -67,10 +72,11 @@ func TestDelete_AlreadyStopped_SkipsStop(t *testing.T) {
 	t.Parallel()
 	a, fr := newApp(t,
 		&stubKeys{key: "k"},
-		reply{stdout: "demo\n"}, // ps -a — exists
-		reply{stdout: "\n"},     // ps — nothing running
-		reply{stdout: "demo\n"}, // rm
-		reply{},                 // untag
+		reply{stdout: "demo\n"},       // ps -a — exists
+		reply{stdout: "\n"},           // ps — nothing running
+		reply{stdout: "demo\n"},       // rm
+		reply{},                       // untag
+		reply{err: &exec.ExitError{}}, // git remote get-url — absent
 	)
 
 	var out bytes.Buffer
@@ -81,8 +87,8 @@ func TestDelete_AlreadyStopped_SkipsStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if got := len(fr.calls); got != 4 {
-		t.Fatalf("expected 4 runner calls (no stop), got %d: %+v", got, fr.calls)
+	if got := len(fr.calls); got != 5 {
+		t.Fatalf("expected 5 runner calls (no stop), got %d: %+v", got, fr.calls)
 	}
 	if strings.Contains(out.String(), "Stopping") {
 		t.Errorf("Stopping progress line should be omitted for a stopped container:\n%s", out.String())
@@ -124,10 +130,11 @@ func TestDelete_RemoteUsesSSH(t *testing.T) {
 	t.Parallel()
 	a, fr := newApp(t,
 		&stubKeys{key: "k"},
-		reply{stdout: "demo\n"}, // ps -a
-		reply{},                 // ps — not running
-		reply{},                 // rm
-		reply{},                 // untag
+		reply{stdout: "demo\n"},       // ps -a
+		reply{},                       // ps — not running
+		reply{},                       // rm
+		reply{},                       // untag
+		reply{err: &exec.ExitError{}}, // git remote get-url — absent
 	)
 
 	err := a.Delete(context.Background(), &bytes.Buffer{}, app.DeleteRequest{
@@ -138,8 +145,75 @@ func TestDelete_RemoteUsesSSH(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if fr.host != "user@host" {
-		t.Fatalf("runner factory should have been called with the remote host; got %q", fr.host)
+	// Orchestrator calls go to the remote host; the trailing git
+	// remote cleanup is always local, regardless of --remote.
+	for i, c := range fr.calls[:4] {
+		if c.host != "user@host" {
+			t.Errorf("call[%d] should target the orchestrator host, got %q", i, c.host)
+		}
+	}
+	if fr.calls[4].host != "" {
+		t.Errorf("git remote cleanup must run locally, got host %q", fr.calls[4].host)
+	}
+}
+
+func TestDelete_RemovesLocalGitRemote(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: "demo\n"},                                 // ps -a
+		reply{},                                                 // ps — not running
+		reply{},                                                 // rm
+		reply{},                                                 // untag
+		reply{stdout: "ssh://user@localhost:33000/home/user/source\n"}, // git remote get-url — present
+		reply{},                                                 // git remote remove
+	)
+
+	var out bytes.Buffer
+	err := a.Delete(context.Background(), &out, app.DeleteRequest{
+		Instance:     "demo",
+		Orchestrator: "podman",
+	})
+	if err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if got := len(fr.calls); got != 6 {
+		t.Fatalf("expected 6 runner calls (ps-a, ps, rm, untag, get-url, remove), got %d: %+v",
+			got, fr.calls)
+	}
+	if fr.calls[4].cmd != "git remote get-url 'codebox-demo'" {
+		t.Errorf("call[4] should be git remote get-url, got %q", fr.calls[4].cmd)
+	}
+	if fr.calls[5].cmd != "git remote remove 'codebox-demo'" {
+		t.Errorf("call[5] should be git remote remove, got %q", fr.calls[5].cmd)
+	}
+	if !strings.Contains(out.String(), `Removing local git remote "codebox-demo"`) {
+		t.Errorf("expected git remote removal progress line, got:\n%s", out.String())
+	}
+}
+
+func TestDelete_GitRemoteRemoveFailureSurfaced(t *testing.T) {
+	t.Parallel()
+	a, _ := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: "demo\n"},
+		reply{},
+		reply{},
+		reply{},
+		reply{stdout: "ssh://...\n"}, // get-url — present
+		reply{stderr: "error: could not remove config section\n", err: &exec.ExitError{}},
+	)
+
+	err := a.Delete(context.Background(), &bytes.Buffer{}, app.DeleteRequest{
+		Instance:     "demo",
+		Orchestrator: "podman",
+	})
+	if err == nil {
+		t.Fatal("expected error when git remote remove fails")
+	}
+	if !strings.Contains(err.Error(), "remove git remote") ||
+		!strings.Contains(err.Error(), "could not remove config section") {
+		t.Errorf("error should include op + stderr; got %v", err)
 	}
 }
 

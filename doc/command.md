@@ -193,6 +193,55 @@ codebox push demo \
 | `--local-path`    | path   | *(unset)* | File or directory on the local machine to copy from. |
 | `--instance-path` | path   | *(unset)* | Directory on the instance to copy into. |
 
+### `codebox git push INSTANCE source_remote/source_branch:target_branch`
+
+Push a fetched remote-tracking ref into a sandbox instance and check
+the resulting branch out at `~/source` inside the container. One
+repository per sandbox: codebox always uses `~/source` so the operator
+never has to remember a per-checkout path.
+
+```
+codebox git push demo origin/main:issue-1234 \
+  --orchestrator=podman --remote=user@host --instance-key=~/.ssh/id_rsa
+```
+
+| Flag             | Type   | Default   | Description |
+| ---------------- | ------ | --------- | ----------- |
+| `--orchestrator` | enum   | `podman`  | Container orchestrator (`podman`, `docker`). |
+| `--remote`       | string | *(local)* | Target a remote host (`user@host`). |
+| `--instance-key` | path   | *(auto)*  | SSH key for logging into the instance. |
+
+Positional arguments:
+
+| Argument | Required | Description |
+| -------- | -------- | ----------- |
+| `INSTANCE` | yes | Name of the target sandbox instance. |
+| `source_remote/source_branch:target_branch` | yes | Source remote and branch in the operator's repo (the part before `:`); `target_branch` is the branch name created on the instance and checked out at `~/source`. |
+
+### `codebox git pull INSTANCE BRANCH`
+
+Fetch a branch from a sandbox instance into a remote-tracking ref on
+the operator's machine (`refs/remotes/INSTANCE/BRANCH`), then print a
+hint showing how to check it out locally.
+
+```
+codebox git pull demo issue-1234 \
+  --orchestrator=podman --remote=user@host --instance-key=~/.ssh/id_rsa
+```
+
+| Flag             | Type   | Default   | Description |
+| ---------------- | ------ | --------- | ----------- |
+| `--orchestrator` | enum   | `podman`  | Container orchestrator (`podman`, `docker`). |
+| `--remote`       | string | *(local)* | Target a remote host (`user@host`). |
+| `--instance-key` | path   | *(auto)*  | SSH key for logging into the instance. |
+
+Positional arguments:
+
+| Argument   | Required | Description |
+| ---------- | -------- | ----------- |
+| `INSTANCE` | yes      | Name of the source sandbox instance. |
+| `BRANCH`   | yes      | Branch on the instance side to fetch. |
+
 ## `create` provisioning
 
 `create` is fully wired today: it builds the image and starts the
@@ -421,6 +470,14 @@ rsync --verbose --archive --compress --update --progress \
    `<engine> rm NAME`.
 5. **Untag.** `<engine> untag NAME` is run silently to drop every tag
    on the image codebox built for the instance.
+6. **Local git remote cleanup.** `git remote get-url codebox-NAME` is
+   run in the operator's current directory; if it succeeds (i.e. the
+   matching instance remote is still wired up from an earlier
+   `codebox git push` or `pull`), codebox prints `Removing local git
+   remote "codebox-NAME"...` and runs `git remote remove
+   codebox-NAME`. A non-git directory, or a missing remote, is treated
+   as a silent no-op — `--remote` never changes this: the cleanup is
+   always local.
 
 Engine stdout (which otherwise echoes the container/image name) is
 captured to internal buffers throughout — only the human-readable
@@ -563,9 +620,115 @@ Both `--local-path` and `--instance-path` are required; omitting
 either fails fast with a flag-name error before any orchestrator
 command is issued.
 
+## `git push` and `git pull` flow
+
+`git push` and `git pull` share the orchestrator-level preflight
+(existence + host port lookup) and the local-side remote bookkeeping.
+See [`git.md`](git.md) for the user-facing walkthrough.
+
+For each invocation the use-case layer performs, in order:
+
+0. **Local git pre-check (CLI layer).** Before any orchestrator work,
+   the CLI confirms the operator's current working directory is the
+   root of a git repository — that is, it contains a `.git/`
+   directory. Subdirectories of a repo, and directories that are not
+   a repo at all, fail fast with
+   `not a git repository: no .git directory in <cwd>`. The same
+   check applies to both `git push` and `git pull` so the operator
+   never reaches the orchestrator with a half-set-up local repo.
+1. **Existence check.** `<engine> ps -a --format '{{.Names}}'` is run
+   against `--remote` (locally if unset). When the instance is missing,
+   the command fails with `instance "NAME" not found` and exits
+   non-zero before any further work.
+2. **Host port lookup.** `<engine> port NAME 2222` is run on the same
+   target; the first `<addr>:<port>` line is parsed and the numeric
+   port retained. A stopped container produces no mapping and surfaces
+   `instance "NAME" is not exposing port 2222; is it running?`.
+3. **Local remote refresh.** A git remote named `codebox-INSTANCE` is
+   (re)pointed at `ssh://user@localhost:PORT/home/user/source` so a
+   restarted container with a newly-assigned host port does not strand
+   the operator with a stale URL. The `codebox-` prefix keeps codebox's
+   auto-managed remotes from colliding with anything the operator
+   configured by hand (e.g. `origin`). The path component is always
+   `/home/user/source` — codebox uses one in-container directory per
+   sandbox. The shell idiom
+   `git remote set-url codebox-INSTANCE URL 2>/dev/null || git remote add codebox-INSTANCE URL`
+   does both cases in one runner call.
+
+### `git push` only
+
+After the shared preflight, `git push` additionally:
+
+1. **Parse the refspec.** The argument is split as
+   `source_remote/source_branch:target_branch`. The slash is only the
+   first one — a source branch like `feature/x` is fine.
+2. **Read operator identity.** `git config --get user.name` and
+   `git config --get user.email` are run locally. Unset values become
+   empty strings — the init step below simply skips them.
+3. **Initialise the instance source dir.** An ssh hop into the
+   instance runs an idempotent script:
+
+   ```sh
+   if [ ! -d ~/source/.git ]; then
+     mkdir -p ~/source && git init -q ~/source && cd ~/source &&
+     git config receive.denyCurrentBranch updateInstead [&&
+     git config user.name 'NAME'] [&&
+     git config user.email 'EMAIL']
+   fi
+   ```
+
+   The `updateInstead` setting lets subsequent pushes update the
+   instance's working tree atomically when it is clean (and refuse
+   when it is dirty). Operator identity is written **only at init
+   time**; it is not refreshed on later pushes.
+4. **Local fetch.** `git fetch source_remote` is run locally so the
+   remote-tracking ref `source_remote/source_branch` reflects the
+   upstream tip before it is pushed onward.
+5. **Push.**
+   `GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no [-i KEY] [-J Remote]'
+   git push codebox-INSTANCE source_remote/source_branch:refs/heads/target_branch`
+   is run locally. The remote URL stored in `.git/config` does not
+   encode `-i` / `-J`; those options live on `GIT_SSH_COMMAND` so they
+   apply only when codebox invokes git.
+6. **Checkout.** A second ssh hop runs
+   `cd /home/user/source && git checkout target_branch` so the
+   instance has the freshly pushed branch checked out at
+   `~/source`. The branch was just created by step 5, so a plain
+   `git checkout` is enough — no `-b` (which would refuse with
+   "branch already exists") and no `-B` (which would clobber a
+   manually advanced branch on the instance side).
+7. **Success line.** A one-line message names the branch and `~/source`.
+
+### `git pull` only
+
+After the shared preflight, `git pull` runs
+`GIT_SSH_COMMAND=... git fetch codebox-INSTANCE BRANCH` locally,
+populating `refs/remotes/codebox-INSTANCE/BRANCH` in the operator's
+repository. A two-line hint then prints the exact local checkout
+command:
+
+```
+Fetched "BRANCH" from instance "INSTANCE".
+To check it out locally:
+  git checkout codebox-INSTANCE/BRANCH -b BRANCH
+```
+
+### Transport details
+
+- The orchestrator-bound ssh used for steps 1 and 2 honours the
+  operator's normal ssh configuration; `--instance-key` is **never**
+  passed to it.
+- The container-bound ssh (init / checkout / push / fetch transport)
+  threads `-i KEY` (when `--instance-key` is set) and `-J Remote`
+  (when `--remote` is set).
+- The `git push` / `git fetch` invocations are echoed to stdout
+  bracketed by horizontal rules, mirroring the Dockerfile and rsync
+  blocks emitted by `create` and `push`/`pull`.
+
 ## Status
 
-`create`, `delete`, `list`, `shell`, `exec`, `pull`, and `push` are
-all implemented end-to-end. The behaviours described above are the
-**specification** the implementation is held against — if the two
-disagree, this file is canonical and the code should be updated.
+`create`, `delete`, `list`, `shell`, `exec`, `pull`, `push`, and
+`git push` / `git pull` are all implemented end-to-end. The
+behaviours described above are the **specification** the
+implementation is held against — if the two disagree, this file is
+canonical and the code should be updated.
