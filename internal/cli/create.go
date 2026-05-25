@@ -13,10 +13,8 @@ import (
 )
 
 type createOpts struct {
+	commonOpts
 	instance          string
-	orchestrator      string
-	remote            string
-	instanceKey       string
 	rebuild           bool
 	httpsProxy        string
 	osImage           string
@@ -81,6 +79,7 @@ func newCreateCmd() *cobra.Command {
 			"--remote to provision on another host over ssh.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			opts.commonOpts = readCommonOpts(cmd)
 			opts.instance = args[0]
 			return runCreate(cmd.Context(), cmd.OutOrStdout(), opts)
 		},
@@ -88,12 +87,6 @@ func newCreateCmd() *cobra.Command {
 
 	f := cmd.Flags()
 	f.SortFlags = false
-	f.StringVar(&opts.orchestrator, "orchestrator", "podman",
-		"Container orchestrator (podman, docker)")
-	f.StringVar(&opts.remote, "remote", "",
-		"Provision on a remote host running the orchestrator (user@host); default is local")
-	f.StringVar(&opts.instanceKey, "instance-key", "",
-		"SSH key for logging into the new instance (auto-detected if omitted)")
 	f.BoolVar(&opts.rebuild, "rebuild", false,
 		"Force a rebuild of the base image even if a cached one exists")
 	f.StringVar(&opts.httpsProxy, "https-proxy", "",
@@ -121,8 +114,34 @@ func newCreateCmd() *cobra.Command {
 	f.BoolVar(&opts.psql, "psql", false,
 		"Install the psql PostgreSQL client")
 
+	registerCreateValueCompletions(cmd)
+
 	cmd.SetHelpTemplate(createHelpTemplate)
 	return cmd
+}
+
+// registerCreateValueCompletions wires fixed-enum value completion for
+// the create flags whose accepted values are known at build time. The
+// candidate sets come through internal/app (which re-exports the
+// domain-layer enums) so the CLI stays decoupled from internal/image.
+//
+// RegisterFlagCompletionFunc only fails when the flag does not exist
+// — a programmer error this file would catch on the first build — so
+// the returned errors are intentionally discarded.
+func registerCreateValueCompletions(cmd *cobra.Command) {
+	pairs := []struct {
+		flag   string
+		values []string
+	}{
+		{"os", app.SupportedOS()},
+		{"python", app.SupportedPython()},
+		{"node", app.SupportedNode()},
+		{"golang", app.SupportedGolang()},
+		{"dotnet", app.SupportedDotnet()},
+	}
+	for _, p := range pairs {
+		_ = cmd.RegisterFlagCompletionFunc(p.flag, staticCompletion(p.values))
+	}
 }
 
 func runCreate(ctx context.Context, out io.Writer, opts createOpts) error {

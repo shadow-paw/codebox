@@ -242,6 +242,27 @@ Positional arguments:
 | `INSTANCE` | yes      | Name of the source sandbox instance. |
 | `BRANCH`   | yes      | Branch on the instance side to fetch. |
 
+### `codebox completion SHELL`
+
+Emit a shell-completion script. The script wires `<TAB>` after
+`codebox <cmd>` to a runtime lookup of live instance names — see
+[Shell completion](#shell-completion) for the full contract.
+
+```
+codebox completion bash > /etc/bash_completion.d/codebox
+codebox completion zsh  > "${fpath[1]}/_codebox"
+codebox completion fish > ~/.config/fish/completions/codebox.fish
+codebox completion powershell | Out-String | Invoke-Expression
+```
+
+| Argument | Required | Description |
+| -------- | -------- | ----------- |
+| `SHELL`  | yes      | One of `bash`, `zsh`, `fish`, `powershell`. |
+
+The script is written to stdout. Banner output is suppressed for this
+command so its stdout remains an evaluable script — the same rule that
+applies to `codebox exec` and the hidden completion runtime calls.
+
 ## `create` provisioning
 
 `create` is fully wired today: it builds the image and starts the
@@ -725,10 +746,65 @@ To check it out locally:
   bracketed by horizontal rules, mirroring the Dockerfile and rsync
   blocks emitted by `create` and `push`/`pull`.
 
+## Shell completion
+
+`codebox completion <bash|zsh|fish|powershell>` emits a shell-specific
+completion script on stdout. Source it (per the snippets in the
+[`completion` command reference](#codebox-completion-shell)) and the
+shell will offer tab-completion for subcommands, flag names, and
+INSTANCE positional arguments.
+
+### Instance-name candidates
+
+Subcommands whose first positional is `INSTANCE` — `delete`, `shell`,
+`exec`, `pull`, `push`, `git push`, `git pull` — surface live instance
+names to the shell. At each tab press the completion path runs a
+single orchestrator query:
+
+```
+<engine> ps -a --filter label=codebox=true --format '{{.Names}}|{{.CreatedAt}}|{{.Ports}}'
+```
+
+and returns the `Names` column. The query honours partially-typed
+flags from the command line:
+
+- `--orchestrator=<podman|docker>` picks the engine (default `podman`).
+- `--remote=user@host` routes the query over ssh to the orchestrator
+  host, so completion on a remote sandbox host returns the names that
+  actually live there.
+- `--instance-key=PATH` is parsed off the partial command line but is
+  **not** used by the lookup: the listing path always uses the
+  operator's normal ssh configuration to reach the orchestrator host,
+  never the per-instance key.
+
+`create`'s `INSTANCE` argument is a new name, so no completion is
+offered for it.
+
+### Failure modes
+
+When the lookup fails (engine missing, ssh unreachable, no instances)
+the completion function returns no candidates and the directive
+`ShellCompDirectiveNoFileComp` — the shell offers nothing rather than
+falling back to filename completion, and the operator can still type
+the instance name manually. No error message is surfaced to the
+shell, because completion runs inside an interactive read-line loop
+where a stderr blob would corrupt the prompt.
+
+### Banner suppression
+
+The banner is suppressed for `codebox completion`, the hidden
+`__complete` / `__completeNoDesc` runtime helpers, and `codebox exec`
+— each of those streams is consumed by another program (the shell or
+a downstream pipe). When `--help` / `-h` is present anywhere in the
+arguments the suppression is cancelled, so every help path
+(`codebox`, `codebox help`, `codebox --help`,
+`codebox <cmd> --help`, `codebox help <cmd>`) renders the same banner
++ help body.
+
 ## Status
 
-`create`, `delete`, `list`, `shell`, `exec`, `pull`, `push`, and
-`git push` / `git pull` are all implemented end-to-end. The
-behaviours described above are the **specification** the
-implementation is held against — if the two disagree, this file is
-canonical and the code should be updated.
+`create`, `delete`, `list`, `shell`, `exec`, `pull`, `push`,
+`git push` / `git pull`, and `completion` are all implemented
+end-to-end. The behaviours described above are the **specification**
+the implementation is held against — if the two disagree, this file
+is canonical and the code should be updated.

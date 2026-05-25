@@ -173,3 +173,67 @@ func TestList_RejectsUnknownOrchestrator(t *testing.T) {
 		t.Errorf("runner should not be invoked when orchestrator is invalid")
 	}
 }
+
+// TestListInstanceNames_ReturnsNamesInOrder pins the contract that the
+// completion-friendly view of the listing returns instance names in
+// engine order (no sorting, no filtering by status).
+func TestListInstanceNames_ReturnsNamesInOrder(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	stdout := fmt.Sprintf(
+		"demo|%s|0.0.0.0:33000->2222/tcp\nstale|%s|\nfresh|%s|0.0.0.0:33001->2222/tcp\n",
+		createdAt(now.Add(-3*time.Hour)),
+		createdAt(now.Add(-49*time.Hour)),
+		createdAt(now.Add(-1*time.Minute)),
+	)
+	a, _ := newApp(t, &stubKeys{key: "k"}, reply{stdout: stdout})
+
+	names, err := a.ListInstanceNames(context.Background(), app.ListRequest{Orchestrator: "podman"})
+	if err != nil {
+		t.Fatalf("ListInstanceNames: %v", err)
+	}
+	want := []string{"demo", "stale", "fresh"}
+	if len(names) != len(want) {
+		t.Fatalf("got %d names, want %d (%v)", len(names), len(want), names)
+	}
+	for i, n := range want {
+		if names[i] != n {
+			t.Errorf("names[%d] = %q, want %q (%v)", i, names[i], n, names)
+		}
+	}
+}
+
+func TestListInstanceNames_EmptyHost(t *testing.T) {
+	t.Parallel()
+	a, _ := newApp(t, &stubKeys{key: "k"}, reply{stdout: ""})
+
+	names, err := a.ListInstanceNames(context.Background(), app.ListRequest{Orchestrator: "podman"})
+	if err != nil {
+		t.Fatalf("ListInstanceNames: %v", err)
+	}
+	if len(names) != 0 {
+		t.Errorf("empty host should yield no names, got %v", names)
+	}
+}
+
+func TestListInstanceNames_RemoteRoutesThroughHost(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	stdout := fmt.Sprintf("demo|%s|0.0.0.0:33000->2222/tcp\n",
+		createdAt(now.Add(-time.Minute)))
+	a, fr := newApp(t, &stubKeys{key: "k"}, reply{stdout: stdout})
+
+	names, err := a.ListInstanceNames(context.Background(), app.ListRequest{
+		Orchestrator: "podman",
+		Remote:       "ops@bastion",
+	})
+	if err != nil {
+		t.Fatalf("ListInstanceNames: %v", err)
+	}
+	if fr.host != "ops@bastion" {
+		t.Errorf("runner factory should have received remote host, got %q", fr.host)
+	}
+	if len(names) != 1 || names[0] != "demo" {
+		t.Errorf("expected [demo], got %v", names)
+	}
+}

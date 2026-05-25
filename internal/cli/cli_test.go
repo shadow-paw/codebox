@@ -51,6 +51,7 @@ func TestRun_NoArgs_ShowsBannerAndHelp(t *testing.T) {
 	wants := []string{
 		"https://github.com/shadow-paw/codebox",
 		"Available Commands:",
+		"completion",
 		"create",
 		"delete",
 		"list",
@@ -69,40 +70,102 @@ func TestRun_NoArgs_ShowsBannerAndHelp(t *testing.T) {
 func TestRun_Help_ShowsAllCommands(t *testing.T) {
 	t.Parallel()
 	stdout, _ := runCLI(t, []string{"--help"})
-	for _, c := range []string{"create", "delete", "list", "shell", "exec", "pull", "push"} {
+	for _, c := range []string{"completion", "create", "delete", "list", "shell", "exec", "pull", "push"} {
 		if !strings.Contains(stdout, c) {
 			t.Errorf("--help missing command %q", c)
 		}
 	}
 }
 
+// TestRun_RootHelpFormsAreIdentical pins the contract that the three
+// root-help entrypoints — bare invocation, `help`, and `--help` —
+// render the same output. The banner, command list, and Flags section
+// must all line up so operators see one stable help page regardless of
+// how they ask for it.
+func TestRun_RootHelpFormsAreIdentical(t *testing.T) {
+	t.Parallel()
+	bare, _ := runCLI(t, nil)
+	helpCmd, _ := runCLI(t, []string{"help"})
+	helpFlag, _ := runCLI(t, []string{"--help"})
+	if bare != helpCmd {
+		t.Errorf("`codebox` and `codebox help` differ:\n%s", diffFirstLines(bare, helpCmd))
+	}
+	if bare != helpFlag {
+		t.Errorf("`codebox` and `codebox --help` differ:\n%s", diffFirstLines(bare, helpFlag))
+	}
+}
+
+// TestRun_SubcommandHelpFormsAreIdentical pins the same contract for
+// every subcommand: `codebox <cmd> --help` and `codebox help <cmd>`
+// render identically (banner + the subcommand's own help).
+func TestRun_SubcommandHelpFormsAreIdentical(t *testing.T) {
+	t.Parallel()
+	cmds := []string{"create", "delete", "list", "shell", "exec", "pull", "push", "git", "completion"}
+	for _, c := range cmds {
+		c := c
+		t.Run(c, func(t *testing.T) {
+			t.Parallel()
+			viaFlag, _ := runCLI(t, []string{c, "--help"})
+			viaHelp, _ := runCLI(t, []string{"help", c})
+			if viaFlag != viaHelp {
+				t.Errorf("`codebox %s --help` and `codebox help %s` differ:\n%s",
+					c, c, diffFirstLines(viaFlag, viaHelp))
+			}
+			if !strings.Contains(viaFlag, "https://github.com/shadow-paw/codebox") {
+				t.Errorf("help for %q should keep the banner; got:\n%s", c, viaFlag)
+			}
+		})
+	}
+}
+
+// diffFirstLines returns a small head-to-head excerpt of two strings
+// for use in error messages — full diffs blow up the test log.
+func diffFirstLines(a, b string) string {
+	const n = 30
+	la, lb := strings.SplitN(a, "\n", n+1), strings.SplitN(b, "\n", n+1)
+	limit := len(la)
+	if len(lb) < limit {
+		limit = len(lb)
+	}
+	var sb strings.Builder
+	for i := 0; i < limit && i < n; i++ {
+		if la[i] != lb[i] {
+			sb.WriteString("- ")
+			sb.WriteString(la[i])
+			sb.WriteByte('\n')
+			sb.WriteString("+ ")
+			sb.WriteString(lb[i])
+			sb.WriteByte('\n')
+		}
+	}
+	return sb.String()
+}
+
 // TestPullPush_HelpListsFlags exercises the cobra wiring for the
 // pull/push commands without invoking their action layer. The full
 // behaviour is covered by app-layer tests; this guards the flag
-// surface visible to operators.
+// surface visible to operators: the command-specific flags appear in
+// the Flags: block in declared order, and the inherited
+// --orchestrator, --remote, --instance-key fall under Global Flags:.
 func TestPullPush_HelpListsFlags(t *testing.T) {
 	t.Parallel()
 
-	cases := map[string][]string{
-		"pull": {"--orchestrator", "--remote", "--instance-key", "--instance-path", "--local-path"},
-		"push": {"--orchestrator", "--remote", "--instance-key", "--local-path", "--instance-path"},
+	cases := map[string]struct{ local, global []string }{
+		"pull": {
+			local:  []string{"--instance-path", "--local-path"},
+			global: []string{"--instance-key", "--orchestrator", "--remote"},
+		},
+		"push": {
+			local:  []string{"--local-path", "--instance-path"},
+			global: []string{"--instance-key", "--orchestrator", "--remote"},
+		},
 	}
-	for cmd, wants := range cases {
-		cmd, wants := cmd, wants
+	for cmd, want := range cases {
+		cmd, want := cmd, want
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
 			stdout, _ := runCLI(t, []string{cmd, "--help"})
-			prev := -1
-			for _, flag := range wants {
-				pos := strings.Index(stdout, flag)
-				if pos == -1 {
-					t.Fatalf("%s --help missing flag %q\n%s", cmd, flag, stdout)
-				}
-				if pos <= prev {
-					t.Fatalf("%s --help flag %q out of order\n%s", cmd, flag, stdout)
-				}
-				prev = pos
-			}
+			assertOrderedSections(t, stdout, want.local, want.global)
 		})
 	}
 }
@@ -150,32 +213,66 @@ func TestGit_RejectsNonGitCwd(t *testing.T) {
 	}
 }
 
-// TestGitPushPull_HelpListsFlags pins the flag order each git
-// subcommand exposes.
+// TestGitPushPull_HelpListsFlags pins the flag surface each git
+// subcommand exposes. The three common flags are inherited from the
+// root command and surface under "Global Flags:".
 func TestGitPushPull_HelpListsFlags(t *testing.T) {
 	t.Parallel()
-	cases := map[string][]string{
-		"git push": {"--orchestrator", "--remote", "--instance-key"},
-		"git pull": {"--orchestrator", "--remote", "--instance-key"},
-	}
-	for cmd, wants := range cases {
-		cmd, wants := cmd, wants
+	for _, cmd := range []string{"git push", "git pull"} {
+		cmd := cmd
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
 			args := append(strings.Split(cmd, " "), "--help")
 			stdout, _ := runCLI(t, args)
-			prev := -1
-			for _, flag := range wants {
-				pos := strings.Index(stdout, flag)
-				if pos == -1 {
-					t.Fatalf("%s --help missing flag %q\n%s", cmd, flag, stdout)
-				}
-				if pos <= prev {
-					t.Fatalf("%s --help flag %q out of order\n%s", cmd, flag, stdout)
-				}
-				prev = pos
-			}
+			assertOrderedSections(t, stdout, nil,
+				[]string{"--instance-key", "--orchestrator", "--remote"})
 		})
+	}
+}
+
+// assertOrderedSections checks that the local flags appear in order
+// under "Flags:" and the global flags appear in order under "Global
+// Flags:". Either slice may be empty (e.g. commands with no local
+// flags). The "Global Flags:" header always sits after the "Flags:"
+// header, so finding it confirms the section boundary.
+func assertOrderedSections(t *testing.T, help string, local, global []string) {
+	t.Helper()
+
+	globalStart := strings.Index(help, "Global Flags:")
+	if globalStart == -1 && len(global) > 0 {
+		t.Fatalf("help has no Global Flags: section\n%s", help)
+	}
+
+	if len(local) > 0 {
+		flagsStart := strings.Index(help, "Flags:")
+		if flagsStart == -1 {
+			t.Fatalf("help has no Flags: section\n%s", help)
+		}
+		end := len(help)
+		if globalStart > flagsStart {
+			end = globalStart
+		}
+		block := help[flagsStart:end]
+		assertOrdered(t, "Flags", block, local)
+	}
+
+	if len(global) > 0 {
+		assertOrdered(t, "Global Flags", help[globalStart:], global)
+	}
+}
+
+func assertOrdered(t *testing.T, section, block string, want []string) {
+	t.Helper()
+	prev := -1
+	for _, flag := range want {
+		pos := strings.Index(block, flag)
+		if pos == -1 {
+			t.Fatalf("%s block missing flag %q\n%s", section, flag, block)
+		}
+		if pos <= prev {
+			t.Fatalf("%s block: flag %q out of order\n%s", section, flag, block)
+		}
+		prev = pos
 	}
 }
 
@@ -193,6 +290,247 @@ func TestExec_SuppressesBanner(t *testing.T) {
 		&so, &se)
 	if strings.Contains(so.String(), "https://github.com/shadow-paw/codebox") {
 		t.Errorf("stdout should not contain banner, got:\n%s", so.String())
+	}
+}
+
+// TestCompletion_SuppressesBanner pins the same contract for shell
+// completion script generation: `codebox completion bash` (and the
+// other shells) emits an evaluable shell script, so the banner must
+// not be prepended.
+func TestCompletion_SuppressesBanner(t *testing.T) {
+	t.Parallel()
+	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
+		shell := shell
+		t.Run(shell, func(t *testing.T) {
+			t.Parallel()
+			stdout, _ := runCLI(t, []string{"completion", shell})
+			if strings.Contains(stdout, "https://github.com/shadow-paw/codebox") {
+				t.Errorf("completion %s stdout should not contain banner, got first chars:\n%s",
+					shell, firstChars(stdout, 200))
+			}
+			if stdout == "" {
+				t.Errorf("completion %s should emit a script", shell)
+			}
+		})
+	}
+}
+
+// TestCompleteRuntime_SuppressesBanner guards the hidden __complete
+// command cobra fires at tab-completion time. Its stdout is parsed by
+// the shell — a banner would break the parse.
+func TestCompleteRuntime_SuppressesBanner(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"__complete", "__completeNoDesc"} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var so, se bytes.Buffer
+			_ = cli.Run(context.Background(), []string{name, "shell", ""}, &so, &se)
+			if strings.Contains(so.String(), "https://github.com/shadow-paw/codebox") {
+				t.Errorf("%s stdout should not contain banner, got:\n%s", name, so.String())
+			}
+		})
+	}
+}
+
+// TestCompletion_HelpKeepsBanner pins that asking for help on a
+// banner-suppressed command still keeps the banner — help is for
+// humans, banners belong on every help path.
+func TestCompletion_HelpKeepsBanner(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"completion", "--help"},
+		{"completion", "bash", "--help"},
+		{"exec", "--help"},
+		{"exec", "-h"},
+	} {
+		args := args
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			t.Parallel()
+			stdout, _ := runCLI(t, args)
+			if !strings.Contains(stdout, "https://github.com/shadow-paw/codebox") {
+				t.Errorf("%v should keep the banner; got:\n%s", args, stdout)
+			}
+		})
+	}
+}
+
+func firstChars(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
+// TestRootFlags_AcceptedBeforeOrAfterCommand pins the contract that
+// --orchestrator, --remote and --instance-key are root-level
+// persistent flags: cobra accepts them in any position before `--`,
+// including before the subcommand name. The test fires `delete` with
+// a bogus orchestrator placed first; the value must reach the
+// container layer (engine lookup) regardless of position so the
+// resulting error mentions "unsupported orchestrator".
+func TestRootFlags_AcceptedBeforeOrAfterCommand(t *testing.T) {
+	t.Parallel()
+	placements := map[string][]string{
+		"before command": {"--orchestrator=containerd", "delete", "demo"},
+		"after command":  {"delete", "demo", "--orchestrator=containerd"},
+		"after instance": {"delete", "--orchestrator=containerd", "demo"},
+	}
+	for name, args := range placements {
+		args := args
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var so, se bytes.Buffer
+			code := cli.Run(context.Background(), args, &so, &se)
+			if code == 0 {
+				t.Fatalf("exit = 0, want non-zero\nstderr=%s", se.String())
+			}
+			if !strings.Contains(se.String(), "unsupported orchestrator") {
+				t.Errorf("stderr should mention 'unsupported orchestrator', got:\n%s",
+					se.String())
+			}
+		})
+	}
+}
+
+// TestComplete_HonoursRemoteBeforeCommand pins that shell completion
+// honours --remote when the operator placed it before the subcommand
+// name. completeInstances reads from cmd.Flags(), which inherits
+// persistent flags from the root, so the placement should not change
+// the lookup target. With no orchestrator reachable the lookup yields
+// no candidates, but the directive emitted (`:4`) and the absence of
+// a banner are the contract under test.
+func TestComplete_HonoursRemoteBeforeCommand(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"__complete", "--remote=ops@bastion", "shell", ""},
+		{"__complete", "shell", "--remote=ops@bastion", ""},
+	} {
+		args := args
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			t.Parallel()
+			var so, se bytes.Buffer
+			_ = cli.Run(context.Background(), args, &so, &se)
+			if !strings.Contains(so.String(), ":4") {
+				t.Errorf("completion should surface directive :4 (NoFileComp); stdout=%q stderr=%q",
+					so.String(), se.String())
+			}
+			if strings.Contains(so.String(), "https://github.com/shadow-paw/codebox") {
+				t.Errorf("completion stdout should not contain banner; got:\n%s", so.String())
+			}
+		})
+	}
+}
+
+// TestComplete_FlagValueCandidates pins the fixed-enum value
+// completion wired onto --orchestrator, --os, and the language
+// version flags. The cobra __complete protocol writes one candidate
+// per line on stdout, then the directive integer (:4 = NoFileComp),
+// then a debug trailer. We assert each expected candidate appears,
+// and that NoFileComp is set so the shell does not fall back to file
+// completion.
+func TestComplete_FlagValueCandidates(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "--orchestrator at root",
+			args: []string{"__complete", "--orchestrator", ""},
+			want: []string{"podman", "docker"},
+		},
+		{
+			name: "--orchestrator through a subcommand",
+			args: []string{"__complete", "shell", "--orchestrator", ""},
+			want: []string{"podman", "docker"},
+		},
+		{
+			name: "create --os",
+			args: []string{"__complete", "create", "demo", "--os", ""},
+			want: []string{"debian_12", "debian_13", "ubuntu_24", "ubuntu_26", "redhat_10"},
+		},
+		{
+			name: "create --python",
+			args: []string{"__complete", "create", "demo", "--python", ""},
+			want: []string{"3.12", "3.13", "3.14"},
+		},
+		{
+			name: "create --node",
+			args: []string{"__complete", "create", "demo", "--node", ""},
+			want: []string{"24", "25", "26"},
+		},
+		{
+			name: "create --golang",
+			args: []string{"__complete", "create", "demo", "--golang", ""},
+			want: []string{"1.26.0"},
+		},
+		{
+			name: "create --dotnet",
+			args: []string{"__complete", "create", "demo", "--dotnet", ""},
+			want: []string{"8", "10"},
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var so, se bytes.Buffer
+			_ = cli.Run(context.Background(), tc.args, &so, &se)
+			out := so.String()
+			for _, want := range tc.want {
+				if !strings.Contains(out, want+"\n") {
+					t.Errorf("completion missing candidate %q\nstdout=%q\nstderr=%q",
+						want, out, se.String())
+				}
+			}
+			if !strings.Contains(out, ":4") {
+				t.Errorf("completion should surface directive :4 (NoFileComp); stdout=%q stderr=%q",
+					out, se.String())
+			}
+		})
+	}
+}
+
+// TestComplete_WiredOnInstanceCommands sanity-checks that every
+// subcommand whose first positional is INSTANCE is wired up to the
+// completion helper. Without a real engine the lookup yields no
+// candidates, but the directive emitted to stdout must be
+// `ShellCompDirectiveNoFileComp` (encoded as `:4`) so file completion
+// does not leak in as a fallback. Cobra writes the directive integer
+// to stdout (`:<N>`) and a debug trailer to stderr; the script reads
+// only stdout, so we assert on stdout. Commands that take no INSTANCE
+// (`list`, `create`, `completion`) are not asserted on here.
+func TestComplete_WiredOnInstanceCommands(t *testing.T) {
+	t.Parallel()
+	cmds := [][]string{
+		{"delete"},
+		{"shell"},
+		{"exec"},
+		{"pull"},
+		{"push"},
+		{"git", "push"},
+		{"git", "pull"},
+	}
+	for _, c := range cmds {
+		c := c
+		t.Run(strings.Join(c, " "), func(t *testing.T) {
+			t.Parallel()
+			args := append([]string{"__complete"}, c...)
+			args = append(args, "")
+			var so, se bytes.Buffer
+			_ = cli.Run(context.Background(), args, &so, &se)
+			out := so.String()
+			if !strings.Contains(out, ":4") {
+				t.Errorf("`%s` completion should surface directive :4 (NoFileComp); stdout=%q stderr=%q",
+					strings.Join(args, " "), out, se.String())
+			}
+			if strings.Contains(out, "https://github.com/shadow-paw/codebox") {
+				t.Errorf("`%s` completion stdout should not contain banner; got:\n%s",
+					strings.Join(args, " "), out)
+			}
+		})
 	}
 }
 
@@ -266,26 +604,28 @@ func TestExec_RejectsMissingOrMisplacedDash(t *testing.T) {
 // in the same order they are documented in the spec. This guards the
 // "Maintain flags ordering in help" requirement against accidental
 // alphabetic re-sorting.
+//
+// --orchestrator, --remote and --instance-key are persistent root
+// flags; they appear under "Global Flags:" (alphabetised by cobra)
+// rather than in the local Flags: block. The asserted order below
+// covers the create-specific flags in their declared order.
 func TestCreate_FlagOrderMatchesSpec(t *testing.T) {
 	t.Parallel()
 	stdout, _ := runCLI(t, []string{"create", "--help"})
 
-	// Scope the search to the Flags: block so flag names mentioned in the
+	// Scope the local Flags: search so flag names mentioned in the
 	// Long description above do not perturb ordering.
 	flagsStart := strings.Index(stdout, "Flags:")
 	if flagsStart == -1 {
 		t.Fatalf("create --help has no Flags: section\n%s", stdout)
 	}
-	flagsEnd := strings.Index(stdout[flagsStart:], "Orchestrators:")
-	if flagsEnd == -1 {
-		t.Fatalf("create --help has no Orchestrators: footer\n%s", stdout)
+	globalStart := strings.Index(stdout, "Global Flags:")
+	if globalStart == -1 {
+		t.Fatalf("create --help has no Global Flags: section\n%s", stdout)
 	}
-	flagsBlock := stdout[flagsStart : flagsStart+flagsEnd]
+	flagsBlock := stdout[flagsStart:globalStart]
 
-	want := []string{
-		"--orchestrator",
-		"--remote",
-		"--instance-key",
+	wantLocal := []string{
 		"--rebuild",
 		"--https-proxy",
 		"--os",
@@ -300,18 +640,14 @@ func TestCreate_FlagOrderMatchesSpec(t *testing.T) {
 		"--podman",
 		"--psql",
 	}
-	prev := -1
-	for _, flag := range want {
-		pos := strings.Index(flagsBlock, flag)
-		if pos == -1 {
-			t.Fatalf("flag %q missing from create --help Flags block\n%s", flag, flagsBlock)
-		}
-		if pos <= prev {
-			t.Fatalf("flag %q appears before the previous flag (want spec order)\n%s",
-				flag, flagsBlock)
-		}
-		prev = pos
+	assertOrdered(t, "Flags", flagsBlock, wantLocal)
+
+	footerStart := strings.Index(stdout, "Orchestrators:")
+	if footerStart == -1 || footerStart <= globalStart {
+		t.Fatalf("create --help should have Orchestrators: footer after Global Flags:\n%s", stdout)
 	}
+	wantGlobal := []string{"--instance-key", "--orchestrator", "--remote"}
+	assertOrdered(t, "Global Flags", stdout[globalStart:footerStart], wantGlobal)
 }
 
 // TestCreate_AutoDetectAmbiguous covers the failure path: zero or

@@ -15,6 +15,13 @@ type Engine struct {
 	bin string
 }
 
+// SupportedOrchestrators returns the orchestrator names New accepts,
+// in deterministic order. Intended for shell-completion candidate
+// lookup; New uses the same underlying set.
+func SupportedOrchestrators() []string {
+	return []string{"podman", "docker"}
+}
+
 // New returns an Engine for "podman" or "docker". Other names are
 // rejected with a message that lists the supported set.
 func New(orchestrator string) (*Engine, error) {

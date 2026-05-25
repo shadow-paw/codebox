@@ -21,6 +21,96 @@ Write idiomatic Go. Follow Effective Go and the Go Code Review Comments.
 - **Naming:** short, lowercase package names; no stutter (`app.Run`, not `app.AppRun`).
 - **No premature abstraction.** Wait until there are two concrete callers before introducing an interface or a generic helper.
 
+## CLI help text — keep every path identical
+
+The five user-facing help entrypoints must all render the same body
+for the root command, and the same body for each subcommand:
+
+- `codebox`
+- `codebox help`
+- `codebox --help`
+- `codebox <cmd> --help`
+- `codebox help <cmd>`
+
+This means:
+
+- Help is dispatched through cobra (`root.ExecuteContext`), never via
+  a side-channel `root.Help()` call that skips cobra's
+  default-subcommand registration — bypassing that path drops
+  `completion` and `help` from the command list.
+- The banner is suppressed only for commands whose stdout is consumed
+  by another program (`exec`, `completion`, `__complete`,
+  `__completeNoDesc`). The suppression is cancelled when `--help` /
+  `-h` is anywhere on the command line, so the banner stays on every
+  help path regardless of the subcommand.
+- When you add a subcommand, the test `TestRun_SubcommandHelpFormsAreIdentical`
+  in `internal/cli/cli_test.go` automatically pins the two-form
+  equivalence — keep new commands in that test's command list.
+
+## Persistent root flags
+
+`--orchestrator`, `--remote` and `--instance-key` are declared **once**
+as `PersistentFlags()` on the root command (`internal/cli/root.go`)
+and inherited by every subcommand. As a result:
+
+- Operators can place them in any position before `--`, including
+  before the subcommand name:
+  `codebox --remote=ops@bastion shell demo` and
+  `codebox shell demo --remote=ops@bastion` are equivalent. For
+  `exec`, anything after the `--` separator is forwarded to the
+  inner command and is not parsed by codebox.
+- Subcommands read the values with `readCommonOpts(cmd)` (defined in
+  `root.go`); they do **not** re-declare these flags. Re-declaration
+  would shadow the persistent definition and break the
+  before-the-command placement.
+- In subcommand help these flags appear under `Global Flags:`
+  (alphabetised by cobra), not in the local `Flags:` block. The
+  layout is pinned by `TestPullPush_HelpListsFlags`,
+  `TestGitPushPull_HelpListsFlags` and
+  `TestCreate_FlagOrderMatchesSpec`. `TestRootFlags_AcceptedBeforeOrAfterCommand`
+  pins the before/after placement contract.
+
+## Shell completion
+
+When wiring shell-completion candidates, set
+`ValidArgsFunction: completeInstances` on every command whose first
+positional is `INSTANCE`. The helper lives in
+`internal/cli/completion.go` and queries `app.ListInstanceNames`,
+honouring `--orchestrator` and `--remote` from the partial command
+line — including a `--remote` placed before the subcommand, because
+cobra inherits persistent root flags. `--instance-key` is read off
+the command line but not used by the lookup (the listing path uses
+the operator's normal ssh config to reach the orchestrator host,
+never the per-instance key).
+
+`TestComplete_WiredOnInstanceCommands` pins the wiring for every
+INSTANCE-positional subcommand, and
+`TestComplete_HonoursRemoteBeforeCommand` pins that completion
+honours `--remote` regardless of where the operator placed it.
+
+### Flag value completion
+
+Fixed-enum flag values are wired with cobra's
+`RegisterFlagCompletionFunc`. The helper
+`staticCompletion(values)` (in `internal/cli/completion.go`) returns
+the supplied list with `ShellCompDirectiveNoFileComp` so the shell
+does not fall back to path completion on an unrecognised prefix.
+
+Wired flags today:
+
+- `--orchestrator` — registered on the root persistent flag.
+- `--os`, `--python`, `--node`, `--golang`, `--dotnet` — registered
+  on `create`.
+
+The candidate lists come through `internal/app` (the
+`app.Supported*` accessors re-export the domain-layer enums). Do
+**not** import `internal/image` or `internal/container` from
+`internal/cli`; the layering rule below makes that a build break.
+When a new enum is added to the domain layer, expose it through
+`internal/app/catalog.go` and wire the completion alongside the
+flag definition. `TestComplete_FlagValueCandidates` pins the wired
+candidate sets.
+
 ## Modular architecture — decouple presentation from business logic
 
 Maintain a strict layering. Presentation concerns must not leak into business logic, and business logic must not import CLI/IO types.

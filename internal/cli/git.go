@@ -14,12 +14,6 @@ import (
 	"codebox/internal/app"
 )
 
-type gitOpts struct {
-	orchestrator string
-	remote       string
-	instanceKey  string
-}
-
 func newGitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "git",
@@ -38,8 +32,6 @@ func newGitCmd() *cobra.Command {
 }
 
 func newGitPushCmd() *cobra.Command {
-	var opts gitOpts
-
 	cmd := &cobra.Command{
 		Use:   "push INSTANCE source_remote/source_branch:target_branch",
 		Short: "Push a fetched remote-tracking ref into a sandbox instance",
@@ -49,51 +41,40 @@ func newGitPushCmd() *cobra.Command {
 			"locally, pushes the resulting remote-tracking ref to\n" +
 			"refs/heads/target_branch on the instance, and checks target_branch\n" +
 			"out at ~/source inside the sandbox.",
-		Args: cobra.ExactArgs(2),
+		Args:              cobra.ExactArgs(2),
+		ValidArgsFunction: completeInstances,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runGitPush(cmd.Context(),
-				cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], args[1], opts)
+				cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], args[1], readCommonOpts(cmd))
 		},
 	}
-	addGitFlags(cmd, &opts)
+	cmd.Flags().SortFlags = false
 	return cmd
 }
 
 func newGitPullCmd() *cobra.Command {
-	var opts gitOpts
-
 	cmd := &cobra.Command{
 		Use:   "pull INSTANCE BRANCH",
 		Short: "Fetch a branch from a sandbox instance into a remote-tracking ref",
 		Long: "Fetch a branch from a sandbox instance into a remote-tracking ref.\n\n" +
 			"The instance's published port is re-resolved each run, so this still\n" +
 			"works after the container has been restarted.",
-		Args: cobra.ExactArgs(2),
+		Args:              cobra.ExactArgs(2),
+		ValidArgsFunction: completeInstances,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runGitPull(cmd.Context(),
-				cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], args[1], opts)
+				cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], args[1], readCommonOpts(cmd))
 		},
 	}
-	addGitFlags(cmd, &opts)
+	cmd.Flags().SortFlags = false
 	return cmd
-}
-
-func addGitFlags(cmd *cobra.Command, opts *gitOpts) {
-	f := cmd.Flags()
-	f.SortFlags = false
-	f.StringVar(&opts.orchestrator, "orchestrator", "podman",
-		"Container orchestrator (podman, docker)")
-	f.StringVar(&opts.remote, "remote", "",
-		"Target a remote host running the orchestrator (user@host); default is local")
-	f.StringVar(&opts.instanceKey, "instance-key", "",
-		"SSH key for logging into the instance (auto-detected if omitted)")
 }
 
 func runGitPush(
 	ctx context.Context,
 	stdout, stderr io.Writer,
 	instance, refspec string,
-	opts gitOpts,
+	opts commonOpts,
 ) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -115,7 +96,7 @@ func runGitPull(
 	ctx context.Context,
 	stdout, stderr io.Writer,
 	instance, branch string,
-	opts gitOpts,
+	opts commonOpts,
 ) error {
 	home, err := os.UserHomeDir()
 	if err != nil {

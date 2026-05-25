@@ -12,37 +12,22 @@ import (
 	"codebox/internal/app"
 )
 
-type execOpts struct {
-	orchestrator string
-	remote       string
-	instanceKey  string
-}
-
 func newExecCmd() *cobra.Command {
-	var opts execOpts
-
 	cmd := &cobra.Command{
 		Use:   "exec INSTANCE -- COMMAND [ARGS...]",
 		Short: "Execute a command inside a sandbox instance",
 		Long: "Execute a command inside a sandbox instance and exit with its\n" +
 			"status code. Place '--' before COMMAND so flags meant for the\n" +
 			"inner command are not consumed by codebox.",
-		Args: execArgs,
+		Args:              execArgs,
+		ValidArgsFunction: completeInstances,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runExec(cmd.Context(),
 				cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
-				args[0], args[1], args[2:], opts)
+				args[0], args[1], args[2:], readCommonOpts(cmd))
 		},
 	}
-
-	f := cmd.Flags()
-	f.SortFlags = false
-	f.StringVar(&opts.orchestrator, "orchestrator", "podman",
-		"Container orchestrator (podman, docker)")
-	f.StringVar(&opts.remote, "remote", "",
-		"Target a remote host running the orchestrator (user@host); default is local")
-	f.StringVar(&opts.instanceKey, "instance-key", "",
-		"SSH key for logging into the instance (auto-detected if omitted)")
+	cmd.Flags().SortFlags = false
 	return cmd
 }
 
@@ -69,7 +54,7 @@ func runExec(
 	stdout, stderr io.Writer,
 	instance, command string,
 	innerArgs []string,
-	opts execOpts,
+	opts commonOpts,
 ) error {
 	home, err := os.UserHomeDir()
 	if err != nil {

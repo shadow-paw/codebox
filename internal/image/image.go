@@ -56,6 +56,24 @@ func SupportedOS() []string {
 	return keys
 }
 
+// SupportedPython returns the version strings Generate will accept
+// for `--python`. Each call returns a fresh slice so callers cannot
+// mutate the package-level enum. Intended for shell-completion
+// candidate lookup; the validator inside Generate uses the same list.
+func SupportedPython() []string { return append([]string(nil), supportedPython...) }
+
+// SupportedNode returns the version strings Generate will accept for
+// `--node`. See SupportedPython for the sharing/copy contract.
+func SupportedNode() []string { return append([]string(nil), supportedNode...) }
+
+// SupportedGolang returns the version strings Generate will accept
+// for `--golang`. See SupportedPython for the sharing/copy contract.
+func SupportedGolang() []string { return append([]string(nil), supportedGolang...) }
+
+// SupportedDotnet returns the version strings Generate will accept
+// for `--dotnet`. See SupportedPython for the sharing/copy contract.
+func SupportedDotnet() []string { return append([]string(nil), supportedDotnet...) }
+
 // Generate writes a Dockerfile for the requested OS to w.
 func Generate(w io.Writer, opts Options) error {
 	s, ok := specs[opts.OS]

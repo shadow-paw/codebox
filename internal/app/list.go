@@ -36,18 +36,10 @@ type ListRequest struct {
 // ssh command an operator can paste to open a shell. When the host has
 // no codebox containers, a single human-readable message is printed.
 func (a *App) List(ctx context.Context, w io.Writer, req ListRequest) error {
-	eng, err := container.New(req.Orchestrator)
+	rows, err := a.listInstances(ctx, req)
 	if err != nil {
 		return err
 	}
-	rnr := a.runners(req.Remote)
-
-	var out, errBuf bytes.Buffer
-	if err := rnr.Run(ctx, eng.ListCodeboxInstances(), nil, &out, &errBuf); err != nil {
-		return wrapRunErr("list instances", err, &errBuf)
-	}
-
-	rows := parseInstanceRows(out.String())
 	if len(rows) == 0 {
 		_, _ = fmt.Fprintln(w, "No codebox instances found.")
 		return nil
@@ -64,6 +56,39 @@ func (a *App) List(ctx context.Context, w io.Writer, req ListRequest) error {
 		)
 	}
 	return tw.Flush()
+}
+
+// ListInstanceNames returns the names of codebox-managed containers on
+// the target host (local or via ssh). The set mirrors what `codebox
+// list` would render; ordering matches the engine's output. Intended
+// for callers that need just the instance names — e.g. shell-completion
+// candidate lookup.
+func (a *App) ListInstanceNames(ctx context.Context, req ListRequest) ([]string, error) {
+	rows, err := a.listInstances(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(rows))
+	for _, row := range rows {
+		names = append(names, row.name)
+	}
+	return names, nil
+}
+
+// listInstances is the shared engine-query path used by both List and
+// ListInstanceNames. It returns the parsed rows in engine order.
+func (a *App) listInstances(ctx context.Context, req ListRequest) ([]instanceRow, error) {
+	eng, err := container.New(req.Orchestrator)
+	if err != nil {
+		return nil, err
+	}
+	rnr := a.runners(req.Remote)
+
+	var out, errBuf bytes.Buffer
+	if err := rnr.Run(ctx, eng.ListCodeboxInstances(), nil, &out, &errBuf); err != nil {
+		return nil, wrapRunErr("list instances", err, &errBuf)
+	}
+	return parseInstanceRows(out.String()), nil
 }
 
 // instanceRow is one parsed line of the engine's list output.

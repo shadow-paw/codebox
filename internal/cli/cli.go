@@ -18,10 +18,13 @@ import (
 // failure or signal-driven cancellation).
 //
 // The banner is written to stdout before any command runs — except for
-// `codebox exec`, whose output is intended to be piped into other tools
-// so a decorative header would corrupt the stream.
+// invocations whose stdout is consumed by another program: `codebox
+// exec` (piped to downstream tools), `codebox completion` (shell
+// script written to a file), and the hidden `__complete` /
+// `__completeNoDesc` runtime calls cobra uses to feed shell tab
+// completion.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if !isExecInvocation(args) {
+	if !suppressBanner(args) {
 		if _, err := fmt.Fprint(stdout, banner()); err != nil {
 			_, _ = fmt.Fprintf(stderr, "codebox: %v\n", err)
 			return 1
@@ -33,14 +36,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 
-	if len(args) == 0 {
-		if err := root.Help(); err != nil {
-			_, _ = fmt.Fprintf(stderr, "codebox: %v\n", err)
-			return 1
-		}
-		return 0
-	}
-
 	if err := root.ExecuteContext(ctx); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return 130
@@ -50,19 +45,37 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// isExecInvocation reports whether the operator is running `codebox
-// exec`. Detection is positional: the first non-flag token determines
-// the subcommand, so global flags placed before it do not perturb the
-// check.
-func isExecInvocation(args []string) bool {
+// suppressBanner reports whether the first positional command is one
+// whose stdout must not be prefixed by the banner: `exec` (piped),
+// `completion` (shell script), and the hidden `__complete` /
+// `__completeNoDesc` runtime calls cobra fires for tab completion.
+// Detection is positional — the first non-flag token determines the
+// subcommand — so global flags before it do not perturb the check.
+//
+// A `--help` / `-h` anywhere before `--` cancels the suppression: help
+// text is for humans and the banner must stay in every help path so
+// `codebox`, `codebox help`, `codebox --help`, `codebox <cmd> --help`,
+// and `codebox help <cmd>` all render the same opening lines.
+func suppressBanner(args []string) bool {
+	cmd := ""
 	for _, a := range args {
 		if a == "--" {
+			break
+		}
+		if a == "--help" || a == "-h" {
 			return false
+		}
+		if cmd != "" {
+			continue
 		}
 		if len(a) > 0 && a[0] == '-' {
 			continue
 		}
-		return a == "exec"
+		cmd = a
+	}
+	switch cmd {
+	case "exec", "completion", "__complete", "__completeNoDesc":
+		return true
 	}
 	return false
 }
