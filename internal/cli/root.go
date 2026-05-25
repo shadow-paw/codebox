@@ -51,6 +51,8 @@ func newRootCmd() *cobra.Command {
 		newPullCmd(),
 		newPushCmd(),
 		newGitCmd(),
+		newMountCmd(),
+		newUmountCmd(),
 	)
 	return root
 }

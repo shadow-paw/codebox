@@ -37,6 +37,10 @@ func (a *App) Delete(ctx context.Context, w io.Writer, req DeleteRequest) error 
 		return err
 	}
 
+	if err := a.unmountInstanceMounts(ctx, w, req.Instance); err != nil {
+		return err
+	}
+
 	running, err := isRunning(ctx, rnr, eng, req.Instance)
 	if err != nil {
 		return err

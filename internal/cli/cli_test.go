@@ -100,7 +100,19 @@ func TestRun_RootHelpFormsAreIdentical(t *testing.T) {
 // render identically (banner + the subcommand's own help).
 func TestRun_SubcommandHelpFormsAreIdentical(t *testing.T) {
 	t.Parallel()
-	cmds := []string{"create", "delete", "list", "shell", "exec", "pull", "push", "git", "completion"}
+	cmds := []string{
+		"create",
+		"delete",
+		"list",
+		"shell",
+		"exec",
+		"pull",
+		"push",
+		"git",
+		"mount",
+		"umount",
+		"completion",
+	}
 	for _, c := range cmds {
 		c := c
 		t.Run(c, func(t *testing.T) {
@@ -512,6 +524,8 @@ func TestComplete_WiredOnInstanceCommands(t *testing.T) {
 		{"push"},
 		{"git", "push"},
 		{"git", "pull"},
+		{"mount"},
+		{"umount"},
 	}
 	for _, c := range cmds {
 		c := c

@@ -242,6 +242,119 @@ Positional arguments:
 | `INSTANCE` | yes      | Name of the source sandbox instance. |
 | `BRANCH`   | yes      | Branch on the instance side to fetch. |
 
+### `codebox mount INSTANCE [LOCAL_DIR]`
+
+sshfs-mount the instance's `~/source` directory onto a local directory
+on the operator's machine. Lets the operator open the in-container
+repository in a local editor without copying it back and forth.
+
+```
+codebox mount demo ./mnt \
+  --orchestrator=podman --remote=user@host --instance-key=~/.ssh/id_rsa
+```
+
+| Flag             | Type   | Default   | Description |
+| ---------------- | ------ | --------- | ----------- |
+| `--orchestrator` | enum   | `podman`  | Container orchestrator (`podman`, `docker`). |
+| `--remote`       | string | *(local)* | Target a remote host (`user@host`). |
+| `--instance-key` | path   | *(auto)*  | SSH key for logging into the instance. |
+
+Positional arguments:
+
+| Argument    | Required | Description |
+| ----------- | -------- | ----------- |
+| `INSTANCE`  | yes      | Name of the target instance. |
+| `LOCAL_DIR` | no       | Local directory to mount onto. Defaults to `.codebox/INSTANCE/` relative to the current working directory. The directory is created if it does not exist. |
+
+The use-case layer performs, in order:
+
+1. **sshfs preflight.** `command -v sshfs` is run on the operator's
+   machine. When sshfs is not installed the command fails fast with
+   `sshfs is not installed on this machine; install it (e.g. \`sudo
+   apt install sshfs\`) and try again`.
+2. **Mount-point check.** `/proc/mounts` is read; if the resolved
+   `LOCAL_DIR` already appears as a mount target the command fails
+   with `local directory "DIR" is already a mount point; unmount it
+   first`. Both default and explicit `LOCAL_DIR` values are resolved
+   to absolute paths against the current working directory before the
+   comparison.
+3. **Existence check.** `<engine> ps -a --format '{{.Names}}'` is run
+   against `--remote` (locally if unset). When the instance is missing,
+   the command fails with `instance "NAME" not found`.
+4. **Host port lookup.** `<engine> port NAME 2222` is run on the same
+   target; the first `<addr>:<port>` line is parsed. A stopped
+   container surfaces `instance "NAME" is not exposing port 2222; is
+   it running?`.
+5. **Local directory creation.** `LOCAL_DIR` (default or supplied) is
+   created with `os.MkdirAll` (mode `0755`).
+6. **Instance source-dir creation.** A container-bound ssh hop runs
+   `mkdir -p ~/source` so the directory exists before sshfs binds to
+   it. The hop reuses the same transport shape as `git push`: `-i KEY`
+   on the inner hop only, `-J Remote` when the orchestrator is reached
+   via a bastion.
+7. **sshfs mount.** The sshfs command is echoed to stdout bracketed by
+   horizontal rules (mirroring the Dockerfile, rsync and git blocks),
+   then run locally so its progress and any permission-denied output
+   stream straight to the operator. The invocation has the shape:
+
+   ```
+   sshfs 'user@localhost:/home/user/source' 'LOCAL_DIR' \
+     -p PORT \
+     -o StrictHostKeyChecking=no \
+     -o fsname='codebox-INSTANCE' \
+     -o reconnect \
+     [-o IdentityFile='KEY'] \
+     [-o ProxyJump='Remote']
+   ```
+
+   - `fsname=codebox-INSTANCE` makes the mount identifiable in
+     `/proc/mounts` so `codebox delete` can find and tear it down.
+   - sshfs failures with `permission denied` in stderr are wrapped as
+     `sshfs: permission denied: ...` so the operator can tell auth
+     failures apart from generic mount errors.
+
+### `codebox umount INSTANCE [LOCAL_DIR]`
+
+Tear down an sshfs mount established by `codebox mount`.
+
+```
+codebox umount demo ./mnt \
+  --orchestrator=podman --remote=user@host --instance-key=~/.ssh/id_rsa
+```
+
+| Flag             | Type   | Default   | Description |
+| ---------------- | ------ | --------- | ----------- |
+| `--orchestrator` | enum   | `podman`  | Container orchestrator (`podman`, `docker`). |
+| `--remote`       | string | *(local)* | Target a remote host (`user@host`). |
+| `--instance-key` | path   | *(auto)*  | SSH key (parsed for symmetry with `mount`; not used by `fusermount`). |
+
+Positional arguments:
+
+| Argument    | Required | Description |
+| ----------- | -------- | ----------- |
+| `INSTANCE`  | yes      | Name of the target instance. |
+| `LOCAL_DIR` | no       | Local directory to unmount. Defaults to `.codebox/INSTANCE/` relative to the current working directory — the same default `mount` uses. |
+
+The use-case layer performs, in order:
+
+1. **Unmount.** `fusermount -u 'LOCAL_DIR'` is run locally without a
+   prior `/proc/mounts` check — fusermount is the source of truth, so
+   its own stderr surfaces when `LOCAL_DIR` is not actually a mount
+   point. Other failures (busy mount, stale handle, …) surface the
+   underlying error so the operator can resolve them and retry.
+2. **Remove if empty.** `LOCAL_DIR` is removed when empty so the
+   default `.codebox/INSTANCE/` does not linger on disk after the
+   mount is gone. A non-empty directory (operator dropped files
+   inside, or the mount target was a pre-existing populated path) is
+   left in place silently. The success line `Removed empty DIR.` is
+   printed on removal.
+
+`codebox delete` runs the same `fusermount -u` step automatically for
+every active mount whose source column in `/proc/mounts` is
+`codebox-INSTANCE`, so the operator does not need to remember to
+unmount before tearing the container down — see
+[`delete` teardown](#delete-teardown).
+
 ### `codebox completion SHELL`
 
 Emit a shell-completion script. The script wires `<TAB>` after
@@ -481,15 +594,24 @@ rsync --verbose --archive --compress --update --progress \
 1. **Existence check.** `<engine> ps -a --format '{{.Names}}'` is run
    (locally or via ssh). If the instance is not present, the command
    fails with `instance "NAME" not found` and exits non-zero.
-2. **Running check.** `<engine> ps --format '{{.Names}}'` lists only
+2. **Auto-unmount.** `/proc/mounts` is read locally; every entry
+   whose source column is `codebox-NAME` is unmounted with
+   `fusermount -u 'TARGET'`. Each unmount prints `Unmounting
+   TARGET...` so the operator can see what is happening. Each
+   unmounted target is then removed if empty (same rule as `codebox
+   umount`: non-empty targets are left in place silently). A failure
+   to read `/proc/mounts` (non-Linux, restricted) silently yields no
+   mounts; a failure to unmount a found entry stops `delete` so the
+   operator can resolve it (e.g. close open files) and re-run.
+3. **Running check.** `<engine> ps --format '{{.Names}}'` lists only
    running containers.
-3. **Stop (conditional).** If the container is running, codebox prints
+4. **Stop (conditional).** If the container is running, codebox prints
    `Stopping container "NAME"...` and runs `<engine> stop NAME`. A
    failure surfaces the engine's stderr; the remove and untag steps
    are skipped.
-4. **Remove.** Codebox prints `Deleting container "NAME"...` and runs
+5. **Remove.** Codebox prints `Deleting container "NAME"...` and runs
    `<engine> rm NAME`.
-5. **Untag.** `<engine> untag NAME` is run silently to drop every tag
+6. **Untag.** `<engine> untag NAME` is run silently to drop every tag
    on the image codebox built for the instance.
 6. **Local git remote cleanup.** `git remote get-url codebox-NAME` is
    run in the operator's current directory; if it succeeds (i.e. the
@@ -757,8 +879,8 @@ INSTANCE positional arguments.
 ### Instance-name candidates
 
 Subcommands whose first positional is `INSTANCE` — `delete`, `shell`,
-`exec`, `pull`, `push`, `git push`, `git pull` — surface live instance
-names to the shell. At each tab press the completion path runs a
+`exec`, `pull`, `push`, `git push`, `git pull`, `mount`, `umount` —
+surface live instance names to the shell. At each tab press the completion path runs a
 single orchestrator query:
 
 ```
@@ -804,7 +926,7 @@ arguments the suppression is cancelled, so every help path
 ## Status
 
 `create`, `delete`, `list`, `shell`, `exec`, `pull`, `push`,
-`git push` / `git pull`, and `completion` are all implemented
-end-to-end. The behaviours described above are the **specification**
-the implementation is held against — if the two disagree, this file
-is canonical and the code should be updated.
+`git push` / `git pull`, `mount` / `umount`, and `completion` are all
+implemented end-to-end. The behaviours described above are the
+**specification** the implementation is held against — if the two
+disagree, this file is canonical and the code should be updated.
