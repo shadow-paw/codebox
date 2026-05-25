@@ -11,6 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+
+	"codebox/internal/settings"
 )
 
 // Run executes the codebox CLI with the supplied context, arguments, and
@@ -24,6 +27,15 @@ import (
 // `__completeNoDesc` runtime calls cobra uses to feed shell tab
 // completion.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	home, _ := os.UserHomeDir()
+	workDir, _ := os.Getwd()
+	global, project, err := settings.Load(home, workDir)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "codebox: %v\n", err)
+		return 1
+	}
+	args = settings.InjectArgs(args, global, project)
+
 	if !suppressBanner(args) {
 		if _, err := fmt.Fprint(stdout, banner()); err != nil {
 			_, _ = fmt.Fprintf(stderr, "codebox: %v\n", err)
