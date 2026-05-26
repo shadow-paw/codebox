@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"codebox/internal/adapters/runner"
 	"codebox/internal/app"
@@ -102,6 +103,7 @@ func TestCreate_HappyPath_Local(t *testing.T) {
 		reply{stdout: "other\n"},  // ps -a — no collision
 		reply{},                   // build — succeeds, no output
 		reply{stdout: "abc123\n"}, // run — container id
+		reply{stdout: "demo\n"},   // ps — running check sees the container
 	)
 
 	var out bytes.Buffer
@@ -115,8 +117,8 @@ func TestCreate_HappyPath_Local(t *testing.T) {
 		t.Fatalf("Create: %v\nout:\n%s", err, out.String())
 	}
 
-	if got := len(fr.calls); got != 3 {
-		t.Fatalf("expected 3 runner calls, got %d: %+v", got, fr.calls)
+	if got := len(fr.calls); got != 4 {
+		t.Fatalf("expected 4 runner calls, got %d: %+v", got, fr.calls)
 	}
 	if !strings.Contains(fr.calls[0].cmd, "podman ps -a") {
 		t.Errorf("call[0] should be ps -a, got %q", fr.calls[0].cmd)
@@ -132,6 +134,9 @@ func TestCreate_HappyPath_Local(t *testing.T) {
 		"podman run -d --name 'demo' --hostname 'demo' --label codebox=true --publish-all",
 	) {
 		t.Errorf("call[2] should run the container, got %q", fr.calls[2].cmd)
+	}
+	if fr.calls[3].cmd != "podman ps --format '{{.Names}}'" {
+		t.Errorf("call[3] should be the running-state probe, got %q", fr.calls[3].cmd)
 	}
 
 	if !strings.Contains(out.String(), `Instance "demo" is ready`) {
@@ -177,6 +182,7 @@ func TestCreate_HappyPath_RemoteUsesSSH(t *testing.T) {
 		reply{stdout: ""},
 		reply{},
 		reply{},
+		reply{stdout: "demo\n"}, // ps — running check
 	)
 
 	var out bytes.Buffer
@@ -202,6 +208,7 @@ func TestCreate_RebuildPassesNoCache(t *testing.T) {
 	a, fr := newApp(t,
 		&stubKeys{key: "k"},
 		reply{stdout: ""}, reply{}, reply{},
+		reply{stdout: "demo\n"}, // ps — running check
 	)
 
 	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
@@ -395,6 +402,7 @@ func TestCreate_AcceptsValidInstanceName(t *testing.T) {
 				reply{stdout: "other\n"},
 				reply{},
 				reply{},
+				reply{stdout: name + "\n"}, // ps — running check
 			)
 			err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
 				Instance:     name,
@@ -426,6 +434,7 @@ func TestCreate_HTTPSProxyExportsInProfile(t *testing.T) {
 		reply{stdout: "other\n"},
 		reply{},
 		reply{},
+		reply{stdout: "demo\n"}, // ps — running check
 	)
 
 	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
@@ -459,6 +468,7 @@ func TestCreate_ClaudeCredentialsRsyncsAfterRun(t *testing.T) {
 		reply{stdout: "other\n"},         // ps -a — no collision
 		reply{},                          // build
 		reply{stdout: "abc123\n"},        // run — container id
+		reply{stdout: "demo\n"},          // ps — running check
 		reply{stdout: "0.0.0.0:33000\n"}, // port lookup
 		reply{},                          // rsync
 	)
@@ -472,14 +482,14 @@ func TestCreate_ClaudeCredentialsRsyncsAfterRun(t *testing.T) {
 		t.Fatalf("Create: %v\nout:\n%s", err, out.String())
 	}
 
-	if got := len(fr.calls); got != 5 {
-		t.Fatalf("expected 5 runner calls (ps -a, build, run, port, rsync), got %d:\n%+v",
+	if got := len(fr.calls); got != 6 {
+		t.Fatalf("expected 6 runner calls (ps -a, build, run, ps, port, rsync), got %d:\n%+v",
 			got, fr.calls)
 	}
-	if !strings.Contains(fr.calls[3].cmd, "podman port 'demo' 2222") {
-		t.Errorf("call[3] should be port lookup, got %q", fr.calls[3].cmd)
+	if !strings.Contains(fr.calls[4].cmd, "podman port 'demo' 2222") {
+		t.Errorf("call[4] should be port lookup, got %q", fr.calls[4].cmd)
 	}
-	rsync := fr.calls[4].cmd
+	rsync := fr.calls[5].cmd
 	for _, want := range []string{
 		"rsync ",
 		"--mkpath",
@@ -492,8 +502,8 @@ func TestCreate_ClaudeCredentialsRsyncsAfterRun(t *testing.T) {
 			t.Errorf("rsync command missing %q:\n%s", want, rsync)
 		}
 	}
-	if fr.calls[4].host != "" {
-		t.Errorf("rsync should run on the local host (host=\"\"), got %q", fr.calls[4].host)
+	if fr.calls[5].host != "" {
+		t.Errorf("rsync should run on the local host (host=\"\"), got %q", fr.calls[5].host)
 	}
 	if !strings.Contains(out.String(), "Pushing Claude credentials") {
 		t.Errorf("expected a status line about pushing credentials:\n%s", out.String())
@@ -538,6 +548,7 @@ func TestCreate_ClaudeCredentialsRemoteAddsJump(t *testing.T) {
 		reply{stdout: "other\n"},
 		reply{},
 		reply{},
+		reply{stdout: "demo\n"}, // ps — running check
 		reply{stdout: "0.0.0.0:44000\n"},
 		reply{},
 	)
@@ -549,14 +560,14 @@ func TestCreate_ClaudeCredentialsRemoteAddsJump(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if fr.calls[3].host != "ops@bastion" {
-		t.Errorf("port lookup should hit the remote, got host %q", fr.calls[3].host)
+	if fr.calls[4].host != "ops@bastion" {
+		t.Errorf("port lookup should hit the remote, got host %q", fr.calls[4].host)
 	}
-	if fr.calls[4].host != "" {
-		t.Errorf("rsync should run locally, got host %q", fr.calls[4].host)
+	if fr.calls[5].host != "" {
+		t.Errorf("rsync should run locally, got host %q", fr.calls[5].host)
 	}
-	if !strings.Contains(fr.calls[4].cmd, `-J '\''ops@bastion'\''`) {
-		t.Errorf("credentials rsync ssh transport should include -J:\n%s", fr.calls[4].cmd)
+	if !strings.Contains(fr.calls[5].cmd, `-J '\''ops@bastion'\''`) {
+		t.Errorf("credentials rsync ssh transport should include -J:\n%s", fr.calls[5].cmd)
 	}
 }
 
@@ -582,6 +593,7 @@ func TestCreate_ClaudeCredentialsRetriesOnceOnConnectFailure(t *testing.T) {
 		reply{stdout: "other\n"},         // ps -a
 		reply{},                          // build
 		reply{stdout: "abc123\n"},        // run
+		reply{stdout: "demo\n"},          // ps — running check
 		reply{stdout: "0.0.0.0:33000\n"}, // port lookup
 		reply{err: rsyncErr, stderr: "Connection refused\n"}, // rsync — fails
 		reply{}, // rsync retry — succeeds
@@ -595,13 +607,13 @@ func TestCreate_ClaudeCredentialsRetriesOnceOnConnectFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v\nout:\n%s", err, out.String())
 	}
-	if got := len(fr.calls); got != 6 {
-		t.Fatalf("expected 6 runner calls (ps, build, run, port, rsync, rsync-retry), got %d:\n%+v",
+	if got := len(fr.calls); got != 7 {
+		t.Fatalf("expected 7 runner calls (ps -a, build, run, ps, port, rsync, rsync-retry), got %d:\n%+v",
 			got, fr.calls)
 	}
-	if fr.calls[4].cmd != fr.calls[5].cmd {
+	if fr.calls[5].cmd != fr.calls[6].cmd {
 		t.Errorf("retry should re-issue the exact same rsync command:\n first: %q\nsecond: %q",
-			fr.calls[4].cmd, fr.calls[5].cmd)
+			fr.calls[5].cmd, fr.calls[6].cmd)
 	}
 	if !strings.Contains(out.String(), "retrying once") {
 		t.Errorf("expected a retry-explanation line in stdout:\n%s", out.String())
@@ -626,6 +638,7 @@ func TestCreate_ClaudeCredentialsBothAttemptsFailSurfacesError(t *testing.T) {
 		reply{stdout: "other\n"},
 		reply{},
 		reply{stdout: "abc123\n"},
+		reply{stdout: "demo\n"}, // ps — running check
 		reply{stdout: "0.0.0.0:33000\n"},
 		reply{err: first, stderr: "Connection refused\n"},
 		reply{err: second, stderr: "Connection refused\n"},
@@ -638,8 +651,8 @@ func TestCreate_ClaudeCredentialsBothAttemptsFailSurfacesError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when both rsync attempts fail")
 	}
-	if got := len(fr.calls); got != 6 {
-		t.Errorf("expected exactly one retry (6 total calls), got %d:\n%+v", got, fr.calls)
+	if got := len(fr.calls); got != 7 {
+		t.Errorf("expected exactly one retry (7 total calls), got %d:\n%+v", got, fr.calls)
 	}
 }
 
@@ -652,6 +665,7 @@ func TestCreate_ClaudeFlagDoesNotImplyCredentialsRsync(t *testing.T) {
 		reply{stdout: "other\n"},
 		reply{},
 		reply{},
+		reply{stdout: "demo\n"}, // ps — running check
 	)
 	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
 		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
@@ -660,12 +674,82 @@ func TestCreate_ClaudeFlagDoesNotImplyCredentialsRsync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if got := len(fr.calls); got != 3 {
+	if got := len(fr.calls); got != 4 {
 		t.Errorf("--claude alone should not trigger a port lookup or rsync; got %d calls", got)
 	}
 	if !strings.Contains(fr.calls[1].stdin, "https://claude.ai/install.sh") {
 		t.Errorf("--claude should embed the Claude installer in the Dockerfile:\n%s",
 			fr.calls[1].stdin)
+	}
+}
+
+// TestCreate_StartCheckRetriesUntilRunning pins the post-run probe:
+// `<engine> run -d` returns as soon as the engine has accepted the
+// request, but the container may not yet appear in the running list.
+// We retry on the backoff schedule and treat the eventual presence
+// of the instance name as success.
+func TestCreate_StartCheckRetriesUntilRunning(t *testing.T) {
+	// No t.Parallel: this test mutates the package-level backoff slice
+	// via SetStartCheckBackoffForTest. Running it in parallel with the
+	// other start-check tests (which mutate the same global) races.
+	restore := app.SetStartCheckBackoffForTest([]time.Duration{0, 0, 0})
+	t.Cleanup(restore)
+
+	a, fr := newApp(t, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},  // ps -a
+		reply{},                   // build
+		reply{stdout: "abc123\n"}, // run
+		reply{stdout: "other\n"},  // ps — not yet running
+		reply{stdout: "demo\n"},   // ps — running
+	)
+
+	var out bytes.Buffer
+	err := a.Create(context.Background(), &out, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v\nout:\n%s", err, out.String())
+	}
+	if got := len(fr.calls); got != 5 {
+		t.Fatalf("expected 5 calls (ps -a, build, run, ps, ps-retry), got %d:\n%+v",
+			got, fr.calls)
+	}
+	if !strings.Contains(out.String(), `Container "demo" is not running yet`) {
+		t.Errorf("expected a wait-and-retry status line:\n%s", out.String())
+	}
+}
+
+// TestCreate_StartCheckFailsAfterAllRetries pins the give-up path:
+// after the initial check plus three retries (4 total attempts), if
+// the container is still not in the running list, Create returns an
+// error naming the instance and the attempt count.
+func TestCreate_StartCheckFailsAfterAllRetries(t *testing.T) {
+	// No t.Parallel: see TestCreate_StartCheckRetriesUntilRunning.
+	restore := app.SetStartCheckBackoffForTest([]time.Duration{0, 0, 0})
+	t.Cleanup(restore)
+
+	a, fr := newApp(t, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},  // ps -a
+		reply{},                   // build
+		reply{stdout: "abc123\n"}, // run
+		reply{stdout: "other\n"},  // ps — never lists demo
+		reply{stdout: "other\n"},
+		reply{stdout: "other\n"},
+		reply{stdout: "other\n"},
+	)
+
+	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+	})
+	if err == nil {
+		t.Fatal("expected error when container never enters the running list")
+	}
+	if !strings.Contains(err.Error(), `instance "demo" did not start after 4 attempts`) {
+		t.Errorf("error should name instance and attempt count, got %v", err)
+	}
+	if got := len(fr.calls); got != 7 {
+		t.Errorf("expected 4 ps probes after run (7 total calls), got %d:\n%+v",
+			got, fr.calls)
 	}
 }
 

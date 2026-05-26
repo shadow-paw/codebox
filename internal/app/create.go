@@ -26,6 +26,22 @@ import (
 // to it.
 var claudeCredentialsRetryDelay = 2 * time.Second
 
+// startCheckBackoff is the sequence of waits between attempts to
+// confirm the freshly-started container is in the engine's running
+// list. The first check runs immediately; if the instance is missing
+// we wait startCheckBackoff[0], retry, then startCheckBackoff[1],
+// retry, and so on. The number of entries sets the retry count (3
+// here: 1s, 3s, 5s), so the total budget before giving up is 9s
+// plus the cost of the four `ps` invocations.
+//
+// Mutable for tests via export_test.go; production code never writes
+// to it.
+var startCheckBackoff = []time.Duration{
+	1 * time.Second,
+	3 * time.Second,
+	5 * time.Second,
+}
+
 // CreateRequest is the use-case input for App.Create. Fields mirror the
 // `codebox create` flags. InstanceKey is the raw value the operator
 // supplied (possibly with a leading "~/"); App.Create handles ~
@@ -123,6 +139,10 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 		return wrapRunErr("start container", err, &runErr)
 	}
 
+	if err := ensureStarted(ctx, w, rnr, eng, req.Instance); err != nil {
+		return err
+	}
+
 	if req.ClaudeCredentials {
 		if err := a.pushClaudeCredentials(ctx, w, rnr, eng, req); err != nil {
 			return err
@@ -132,6 +152,52 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 	_, _ = fmt.Fprintf(w, "Instance %q is ready. Open a shell:\n  %s\n",
 		req.Instance, shellHint(req))
 	return nil
+}
+
+// ensureStarted polls the engine until the freshly-started container
+// shows up in the running list. `<engine> run -d` returns as soon as
+// the engine has accepted the request, but the container may still
+// be transitioning to "running" — or may have exited immediately
+// (e.g. a crash inside the entrypoint). We probe right away and, if
+// the container is not yet in the running set, fall back on the
+// startCheckBackoff schedule for up to len(startCheckBackoff)
+// retries. Each retry announces the wait on w so the operator sees
+// why the create is pausing. A non-nil return means the container
+// never appeared; the caller surfaces it instead of claiming success.
+func ensureStarted(
+	ctx context.Context,
+	w io.Writer,
+	rnr CommandRunner,
+	eng *container.Engine,
+	instance string,
+) error {
+	attempts := len(startCheckBackoff) + 1
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		running, err := isRunning(ctx, rnr, eng, instance)
+		switch {
+		case err != nil:
+			lastErr = err
+		case running:
+			return nil
+		default:
+			lastErr = fmt.Errorf("container %q is not in the running list", instance)
+		}
+		if i == attempts-1 {
+			break
+		}
+		wait := startCheckBackoff[i]
+		_, _ = fmt.Fprintf(w,
+			"Container %q is not running yet; waiting %s before retry (%d/%d)...\n",
+			instance, wait, i+1, len(startCheckBackoff))
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return fmt.Errorf("instance %q did not start after %d attempts: %w",
+		instance, attempts, lastErr)
 }
 
 // pushClaudeCredentials transfers the operator's
