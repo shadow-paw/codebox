@@ -61,16 +61,23 @@ func newGitPushCmd() *cobra.Command {
 
 func newGitPullCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "pull INSTANCE BRANCH",
+		Use:   "pull INSTANCE [BRANCH]",
 		Short: "Fetch a branch from a sandbox instance into a remote-tracking ref",
 		Long: "Fetch a branch from a sandbox instance into a remote-tracking ref.\n\n" +
+			"BRANCH is optional; when omitted it defaults to INSTANCE, matching\n" +
+			"the branch `codebox workflow`/`codebox git push` check out at\n" +
+			"~/source inside a sandbox of the same name.\n\n" +
 			"The instance's published port is re-resolved each run, so this still\n" +
 			"works after the container has been restarted.",
-		Args:              cobra.ExactArgs(2),
+		Args:              cobra.RangeArgs(1, 2),
 		ValidArgsFunction: completeInstances,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			branch := ""
+			if len(args) > 1 {
+				branch = args[1]
+			}
 			return runGitPull(cmd.Context(),
-				cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], args[1], readCommonOpts(cmd))
+				cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], branch, readCommonOpts(cmd))
 		},
 	}
 	cmd.Flags().SortFlags = false

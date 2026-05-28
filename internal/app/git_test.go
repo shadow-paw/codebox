@@ -439,16 +439,38 @@ func TestGitPull_Remote(t *testing.T) {
 	}
 }
 
-func TestGitPull_RejectsMissingBranch(t *testing.T) {
+func TestGitPull_DefaultsBranchToInstance(t *testing.T) {
 	t.Parallel()
-	a, fr := newApp(t, &stubKeys{key: "k"})
-	err := a.GitPull(context.Background(), &bytes.Buffer{}, &bytes.Buffer{},
-		app.GitPullRequest{Instance: "demo", Orchestrator: "podman"})
-	if err == nil || !strings.Contains(err.Error(), "branch is required") {
-		t.Fatalf("expected missing-branch error, got %v", err)
+	a, fr := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: "demo\n"},           // ps -a
+		reply{stdout: "0.0.0.0:33000\n"},  // port
+		reply{},                           // set-url || add
+		reply{stdout: "From ssh://...\n"}, // git fetch
+	)
+
+	var stdout, stderr bytes.Buffer
+	err := a.GitPull(context.Background(), &stdout, &stderr, app.GitPullRequest{
+		Instance:     "demo",
+		Orchestrator: "podman",
+		// Branch omitted: must default to the instance name.
+	})
+	if err != nil {
+		t.Fatalf("GitPull: %v", err)
 	}
-	if len(fr.calls) != 0 {
-		t.Errorf("runner should not be invoked without a branch")
+
+	wantFetch := "GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no' git fetch 'codebox-demo' 'demo'"
+	if fr.calls[3].cmd != wantFetch {
+		t.Errorf("git fetch should default branch to instance:\n got: %q\nwant: %q",
+			fr.calls[3].cmd, wantFetch)
+	}
+	for _, want := range []string{
+		`Fetched "demo" from instance "demo".`,
+		"git checkout codebox-demo/demo -b demo",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("stdout missing %q\n%s", want, stdout.String())
+		}
 	}
 }
 

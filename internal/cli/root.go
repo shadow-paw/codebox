@@ -53,6 +53,7 @@ func newRootCmd() *cobra.Command {
 		newGitCmd(),
 		newMountCmd(),
 		newUmountCmd(),
+		newWorkflowCmd(),
 	)
 	return root
 }

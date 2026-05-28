@@ -33,7 +33,9 @@ type GitPushRequest struct {
 
 // GitPullRequest is the use-case input for App.GitPull. Branch is the
 // ref on the instance side to fetch into a remote-tracking ref on the
-// operator's machine.
+// operator's machine; when empty it defaults to the instance name,
+// matching the convention that a sandbox's working branch shares its
+// name.
 type GitPullRequest struct {
 	Instance     string
 	Orchestrator string
@@ -192,8 +194,13 @@ func (a *App) GitPull(ctx context.Context, stdout, stderr io.Writer, req GitPull
 	if err := validateInstanceName(req.Instance); err != nil {
 		return err
 	}
-	if req.Branch == "" {
-		return errors.New("branch is required")
+	branch := req.Branch
+	if branch == "" {
+		// A bare `git pull INSTANCE` fetches the branch that shares the
+		// instance's name — the same branch `workflow`/`git push` check
+		// out at ~/source. The instance name was just validated, so the
+		// derived branch needs no further format check.
+		branch = req.Instance
 	}
 	eng, err := container.New(req.Orchestrator)
 	if err != nil {
@@ -222,7 +229,7 @@ func (a *App) GitPull(ctx context.Context, stdout, stderr io.Writer, req GitPull
 		return err
 	}
 
-	fetchCmd := buildGitTransportCommand("fetch", remoteName, req.Branch,
+	fetchCmd := buildGitTransportCommand("fetch", remoteName, branch,
 		req.Remote, keyPath)
 	writeGitBlock(stdout, fetchCmd)
 	if err := local.Run(ctx, fetchCmd, nil, stdout, stderr); err != nil {
@@ -231,7 +238,7 @@ func (a *App) GitPull(ctx context.Context, stdout, stderr io.Writer, req GitPull
 
 	_, _ = fmt.Fprintf(stdout,
 		"Fetched %q from instance %q.\nTo check it out locally:\n  git checkout %s/%s -b %s\n",
-		req.Branch, req.Instance, remoteName, req.Branch, req.Branch)
+		branch, req.Instance, remoteName, branch, branch)
 	return nil
 }
 

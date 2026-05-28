@@ -230,14 +230,19 @@ Positional arguments:
   skips the local fetch and pushes the named local branch directly,
   so this form works in repos with no remote configured.
 
-### `codebox git pull INSTANCE BRANCH`
+### `codebox git pull INSTANCE [BRANCH]`
 
 Fetch a branch from a sandbox instance into a remote-tracking ref on
 the operator's machine (`refs/remotes/INSTANCE/BRANCH`), then print a
-hint showing how to check it out locally.
+hint showing how to check it out locally. When `BRANCH` is omitted it
+defaults to `INSTANCE` — the branch `workflow`/`git push` check out at
+`~/source` in a sandbox of the same name.
 
 ```
 codebox git pull demo issue-1234 \
+  --orchestrator=podman --remote=user@host --instance-key=~/.ssh/id_rsa
+
+codebox git pull issue-1234 \              # branch defaults to the instance name
   --orchestrator=podman --remote=user@host --instance-key=~/.ssh/id_rsa
 ```
 
@@ -252,7 +257,7 @@ Positional arguments:
 | Argument   | Required | Description |
 | ---------- | -------- | ----------- |
 | `INSTANCE` | yes      | Name of the source sandbox instance. |
-| `BRANCH`   | yes      | Branch on the instance side to fetch. |
+| `BRANCH`   | no       | Branch on the instance side to fetch; defaults to `INSTANCE`. |
 
 ### `codebox mount INSTANCE [LOCAL_DIR]`
 

@@ -34,7 +34,7 @@ codebox shell instance_name
 
 # 6. Pull the sandbox's branch back as a remote-tracking ref. The
 #    command also prints the exact command to materialise it as a
-#    local branch.
+#    local branch. Omit the branch to default it to the instance name.
 codebox git pull instance_name issue-1234
 #   Fetched "issue-1234" from instance "instance_name".
 #   To check it out locally:
