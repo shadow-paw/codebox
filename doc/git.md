@@ -66,8 +66,11 @@ the same directory you would run plain `git` from.
 
 ## Picking the refspec
 
-`codebox git push INSTANCE source_remote/source_branch:target_branch`
-takes a three-part refspec:
+`codebox git push INSTANCE REFSPEC` accepts two refspec shapes. The
+shape codebox picks is determined by whether the part before `:`
+contains a slash.
+
+### Remote form: `source_remote/source_branch:target_branch`
 
 | Component       | Meaning |
 | --------------- | ------- |
@@ -83,6 +86,27 @@ Common shapes:
 | `origin/main:work`            | A scratch branch off main. |
 | `upstream/release-2:hotfix`   | A hotfix branch off an upstream release. |
 | `origin/feature/auth:auth-wip`| A WIP branch off the auth feature. |
+
+### Local form: `local_branch:target_branch`
+
+| Component       | Meaning |
+| --------------- | ------- |
+| `local_branch`  | A branch that already exists in your local repo. No slash, so codebox treats it as a local ref and skips the upstream fetch. |
+| `target_branch` | The branch name created on the sandbox at `~/source` and checked out there. |
+
+Use this form when your operator-side repo has no remote configured
+(or you want to push a purely local branch without touching the
+network):
+
+```sh
+codebox git push instance_name main:issue-1234
+codebox git push instance_name wip:work
+```
+
+Local branches whose names contain slashes are ambiguous with the
+remote form (`feature/x:work` would be read as remote `feature`,
+branch `x`). To push such a branch, either configure a remote first
+or rename the branch locally before pushing.
 
 ## Restarted containers
 

@@ -33,14 +33,21 @@ func newGitCmd() *cobra.Command {
 
 func newGitPushCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "push INSTANCE source_remote/source_branch:target_branch",
-		Short: "Push a fetched remote-tracking ref into a sandbox instance",
-		Long: "Push a fetched remote-tracking ref into a sandbox instance.\n\n" +
-			"REFSPEC has the form `source_remote/source_branch:target_branch`\n" +
-			"(e.g. `origin/main:issue-1234`). codebox runs `git fetch source_remote`\n" +
-			"locally, pushes the resulting remote-tracking ref to\n" +
-			"refs/heads/target_branch on the instance, and checks target_branch\n" +
-			"out at ~/source inside the sandbox.",
+		Use:   "push INSTANCE REFSPEC",
+		Short: "Push a ref from the operator's repo into a sandbox instance",
+		Long: "Push a ref from the operator's repo into a sandbox instance.\n\n" +
+			"REFSPEC takes one of two shapes:\n\n" +
+			"  source_remote/source_branch:target_branch\n" +
+			"      e.g. `origin/main:issue-1234`. codebox runs\n" +
+			"      `git fetch source_remote` locally, then pushes the resulting\n" +
+			"      remote-tracking ref to refs/heads/target_branch on the\n" +
+			"      instance.\n\n" +
+			"  local_branch:target_branch\n" +
+			"      e.g. `main:issue-1234`. No source remote and no local fetch;\n" +
+			"      the named local branch is pushed straight to\n" +
+			"      refs/heads/target_branch on the instance.\n\n" +
+			"In both forms target_branch is checked out at ~/source inside\n" +
+			"the sandbox after the push.",
 		Args:              cobra.ExactArgs(2),
 		ValidArgsFunction: completeInstances,
 		RunE: func(cmd *cobra.Command, args []string) error {

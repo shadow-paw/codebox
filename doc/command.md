@@ -193,15 +193,18 @@ codebox push demo \
 | `--local-path`    | path   | *(unset)* | File or directory on the local machine to copy from. |
 | `--instance-path` | path   | *(unset)* | Directory on the instance to copy into. |
 
-### `codebox git push INSTANCE source_remote/source_branch:target_branch`
+### `codebox git push INSTANCE REFSPEC`
 
-Push a fetched remote-tracking ref into a sandbox instance and check
+Push a ref from the operator's repo into a sandbox instance and check
 the resulting branch out at `~/source` inside the container. One
 repository per sandbox: codebox always uses `~/source` so the operator
 never has to remember a per-checkout path.
 
 ```
 codebox git push demo origin/main:issue-1234 \
+  --orchestrator=podman --remote=user@host --instance-key=~/.ssh/id_rsa
+
+codebox git push demo main:issue-1234 \
   --orchestrator=podman --remote=user@host --instance-key=~/.ssh/id_rsa
 ```
 
@@ -216,7 +219,16 @@ Positional arguments:
 | Argument | Required | Description |
 | -------- | -------- | ----------- |
 | `INSTANCE` | yes | Name of the target sandbox instance. |
-| `source_remote/source_branch:target_branch` | yes | Source remote and branch in the operator's repo (the part before `:`); `target_branch` is the branch name created on the instance and checked out at `~/source`. |
+| `REFSPEC`  | yes | One of two shapes (see below); `target_branch` is the branch name created on the instance and checked out at `~/source`. |
+
+`REFSPEC` is either:
+
+- `source_remote/source_branch:target_branch` — codebox runs
+  `git fetch source_remote` locally first, then pushes the freshly
+  fetched `source_remote/source_branch` onto the instance.
+- `local_branch:target_branch` — no slash before the `:`. codebox
+  skips the local fetch and pushes the named local branch directly,
+  so this form works in repos with no remote configured.
 
 ### `codebox git pull INSTANCE BRANCH`
 
@@ -802,9 +814,14 @@ For each invocation the use-case layer performs, in order:
 
 After the shared preflight, `git push` additionally:
 
-1. **Parse the refspec.** The argument is split as
-   `source_remote/source_branch:target_branch`. The slash is only the
-   first one — a source branch like `feature/x` is fine.
+1. **Parse the refspec.** The argument is split on the first `:` into
+   source and target. The source is then classified by whether it
+   contains a `/`:
+   - With a slash — `source_remote/source_branch`. The first slash
+     separates the remote from the branch, so a source branch like
+     `feature/x` is fine (`origin/feature/x:work`).
+   - Without a slash — `local_branch`. The local fetch step below
+     is skipped and the named local branch is pushed directly.
 2. **Read operator identity.** `git config --get user.name` and
    `git config --get user.email` are run locally. Unset values become
    empty strings — the init step below simply skips them.
@@ -824,15 +841,19 @@ After the shared preflight, `git push` additionally:
    instance's working tree atomically when it is clean (and refuse
    when it is dirty). Operator identity is written **only at init
    time**; it is not refreshed on later pushes.
-4. **Local fetch.** `git fetch source_remote` is run locally so the
-   remote-tracking ref `source_remote/source_branch` reflects the
-   upstream tip before it is pushed onward.
+4. **Local fetch (remote form only).** `git fetch source_remote` is
+   run locally so the remote-tracking ref
+   `source_remote/source_branch` reflects the upstream tip before it
+   is pushed onward. Skipped when the refspec named a bare local
+   branch — there is no remote to fetch from.
 5. **Push.**
    `GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no [-i KEY] [-J Remote]'
-   git push codebox-INSTANCE source_remote/source_branch:refs/heads/target_branch`
-   is run locally. The remote URL stored in `.git/config` does not
-   encode `-i` / `-J`; those options live on `GIT_SSH_COMMAND` so they
-   apply only when codebox invokes git.
+   git push codebox-INSTANCE SOURCE:refs/heads/target_branch`
+   is run locally, where `SOURCE` is either
+   `source_remote/source_branch` or the bare `local_branch`. The
+   remote URL stored in `.git/config` does not encode `-i` / `-J`;
+   those options live on `GIT_SSH_COMMAND` so they apply only when
+   codebox invokes git.
 6. **Checkout.** A second ssh hop runs
    `cd /home/user/source && git checkout target_branch` so the
    instance has the freshly pushed branch checked out at

@@ -11,11 +11,14 @@ import (
 	"codebox/internal/container"
 )
 
-// GitPushRequest is the use-case input for App.GitPush. Refspec is a
-// `<source_remote>/<source_branch>:<target_branch>` string. codebox
-// fetches source_remote locally, then pushes
-// `source_remote/source_branch` to `refs/heads/target_branch` on the
-// instance, then checks `target_branch` out inside the instance.
+// GitPushRequest is the use-case input for App.GitPush. Refspec is
+// either `<source_remote>/<source_branch>:<target_branch>` or
+// `<local_branch>:<target_branch>`. In the first form codebox fetches
+// source_remote locally, then pushes `source_remote/source_branch` to
+// `refs/heads/target_branch` on the instance; in the second form (no
+// slash before the colon) codebox skips the fetch and pushes the local
+// branch as-is. Either way, `target_branch` is checked out inside the
+// instance.
 //
 // The instance-side repo always lives at `~/source` — one repo per
 // sandbox, named uniformly so the operator never has to remember a
@@ -51,7 +54,7 @@ func instanceRemoteName(instance string) string {
 	return "codebox-" + instance
 }
 
-// GitPush pushes a fetched remote-tracking ref into a sandbox instance:
+// GitPush pushes a local ref into a sandbox instance:
 //
 //  1. Verify the container exists and discover its host-side sshd port.
 //  2. Initialise ~/source on the instance the first time around
@@ -59,11 +62,12 @@ func instanceRemoteName(instance string) string {
 //  3. Set or refresh the local git remote so its URL points at the
 //     instance's current published port and ~/source path.
 //  4. `git fetch <source_remote>` locally so the remote-tracking ref
-//     reflects upstream before we push it onward.
-//  5. `git push <instance>
-//     <source_remote>/<source_branch>:refs/heads/<target_branch>`
-//     over an ssh transport that threads `-i KEY` and `-J Remote`
-//     through GIT_SSH_COMMAND.
+//     reflects upstream before we push it onward — skipped when the
+//     refspec names a local branch directly (no source remote).
+//  5. `git push <instance> <source>:refs/heads/<target_branch>` where
+//     `<source>` is `source_remote/source_branch` or the bare local
+//     branch, over an ssh transport that threads `-i KEY` and
+//     `-J Remote` through GIT_SSH_COMMAND.
 //  6. `git checkout <target_branch>` inside the instance so the
 //     worktree tracks the freshly pushed branch.
 func (a *App) GitPush(ctx context.Context, stdout, stderr io.Writer, req GitPushRequest) error {
@@ -73,6 +77,10 @@ func (a *App) GitPush(ctx context.Context, stdout, stderr io.Writer, req GitPush
 	sourceRemote, sourceBranch, targetBranch, err := parsePushRefspec(req.Refspec)
 	if err != nil {
 		return err
+	}
+	pushSource := sourceBranch
+	if sourceRemote != "" {
+		pushSource = sourceRemote + "/" + sourceBranch
 	}
 	eng, err := container.New(req.Orchestrator)
 	if err != nil {
@@ -112,14 +120,15 @@ func (a *App) GitPush(ctx context.Context, stdout, stderr io.Writer, req GitPush
 		return err
 	}
 
-	fetchCmd := fmt.Sprintf("git fetch %s", shquote(sourceRemote))
-	_, _ = fmt.Fprintf(stdout, "Fetching %q locally...\n", sourceRemote)
-	if err := local.Run(ctx, fetchCmd, nil, stdout, stderr); err != nil {
-		return wrapRunErr("git fetch source remote", err, nil)
+	if sourceRemote != "" {
+		fetchCmd := fmt.Sprintf("git fetch %s", shquote(sourceRemote))
+		_, _ = fmt.Fprintf(stdout, "Fetching %q locally...\n", sourceRemote)
+		if err := local.Run(ctx, fetchCmd, nil, stdout, stderr); err != nil {
+			return wrapRunErr("git fetch source remote", err, nil)
+		}
 	}
 
-	pushRefspec := fmt.Sprintf("%s/%s:refs/heads/%s",
-		sourceRemote, sourceBranch, targetBranch)
+	pushRefspec := fmt.Sprintf("%s:refs/heads/%s", pushSource, targetBranch)
 	pushCmd := buildGitTransportCommand("push", remoteName, pushRefspec,
 		req.Remote, keyPath)
 	writeGitBlock(stdout, pushCmd)
@@ -142,24 +151,36 @@ func (a *App) GitPush(ctx context.Context, stdout, stderr io.Writer, req GitPush
 	return nil
 }
 
-// parsePushRefspec breaks `source_remote/source_branch:target_branch`
-// into its three components. source_branch may itself contain slashes
-// (e.g. `origin/feature/x:work`) — only the first slash separates the
-// remote from the branch.
+// parsePushRefspec breaks the refspec into its components. Two forms
+// are accepted:
+//
+//   - `source_remote/source_branch:target_branch` — the part before
+//     the first slash names a remote configured in the operator's
+//     repo; the source_branch may itself contain slashes
+//     (e.g. `origin/feature/x:work`).
+//   - `local_branch:target_branch` — no slash before the colon. The
+//     returned sourceRemote is empty and sourceBranch carries the
+//     local branch name. The caller skips the local `git fetch` step.
 func parsePushRefspec(s string) (sourceRemote, sourceBranch, targetBranch string, err error) {
 	if s == "" {
-		return "", "", "",
-			errors.New("refspec is required (use 'source_remote/source_branch:target_branch')")
+		return "", "", "", errors.New(
+			"refspec is required (use 'local_branch:target_branch' or" +
+				" 'source_remote/source_branch:target_branch')")
 	}
 	src, dst, ok := strings.Cut(s, ":")
 	if !ok || src == "" || dst == "" {
 		return "", "", "", fmt.Errorf(
-			"refspec %q must be in the form 'source_remote/source_branch:target_branch'", s)
+			"refspec %q must be in the form 'local_branch:target_branch'"+
+				" or 'source_remote/source_branch:target_branch'", s)
 	}
-	rem, br, ok := strings.Cut(src, "/")
-	if !ok || rem == "" || br == "" {
+	if !strings.Contains(src, "/") {
+		return "", src, dst, nil
+	}
+	rem, br, _ := strings.Cut(src, "/")
+	if rem == "" || br == "" {
 		return "", "", "", fmt.Errorf(
-			"refspec %q must name a source remote (e.g. 'origin/main:work')", s)
+			"refspec %q must name a source remote (e.g. 'origin/main:work')"+
+				" or a local branch (e.g. 'main:work')", s)
 	}
 	return rem, br, dst, nil
 }

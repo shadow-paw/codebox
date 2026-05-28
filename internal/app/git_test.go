@@ -185,7 +185,6 @@ func TestGitPush_RejectsBadRefspec(t *testing.T) {
 	cases := map[string]string{
 		"empty refspec": "",
 		"missing colon": "origin/main",
-		"missing slash": "main:work",
 		"empty src":     ":work",
 		"empty dst":     "origin/main:",
 		"empty remote":  "/main:work",
@@ -243,6 +242,52 @@ func TestGitPush_NestedSourceBranch(t *testing.T) {
 		"git push 'codebox-demo' 'origin/feature/x:refs/heads/work'"
 	if fr.calls[7].cmd != wantPush {
 		t.Errorf("push refspec mismatch:\n got: %q\nwant: %q", fr.calls[7].cmd, wantPush)
+	}
+}
+
+// TestGitPush_LocalBranch covers the no-remote form
+// `local_branch:target_branch`: the local `git fetch` is skipped, and
+// the push refspec names the bare local branch on the left.
+func TestGitPush_LocalBranch(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: "demo\n"},          // 0  ps -a — exists
+		reply{stdout: "0.0.0.0:33000\n"}, // 1  port lookup
+		reply{stdout: ""},                // 2  git config user.name
+		reply{stdout: ""},                // 3  git config user.email
+		reply{},                          // 4  ssh init
+		reply{},                          // 5  set-url || add
+		reply{},                          // 6  git push
+		reply{},                          // 7  ssh checkout
+	)
+
+	err := a.GitPush(context.Background(), &bytes.Buffer{}, &bytes.Buffer{},
+		app.GitPushRequest{
+			Instance:     "demo",
+			Orchestrator: "podman",
+			Refspec:      "main:issue-1234",
+		})
+	if err != nil {
+		t.Fatalf("GitPush: %v", err)
+	}
+	if got := len(fr.calls); got != 8 {
+		t.Fatalf("expected 8 runner calls (no local fetch), got %d:\n%+v",
+			got, fr.calls)
+	}
+	for _, c := range fr.calls {
+		if strings.HasPrefix(c.cmd, "git fetch '") {
+			t.Errorf("local form must not invoke `git fetch`, got %q", c.cmd)
+		}
+	}
+	wantPush := "GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no' " +
+		"git push 'codebox-demo' 'main:refs/heads/issue-1234'"
+	if fr.calls[6].cmd != wantPush {
+		t.Errorf("git push mismatch:\n got: %q\nwant: %q", fr.calls[6].cmd, wantPush)
+	}
+	checkoutCmd := fr.calls[7].cmd
+	if !strings.Contains(checkoutCmd, `git checkout '\''issue-1234'\''`) {
+		t.Errorf("checkout ssh command missing target branch: %q", checkoutCmd)
 	}
 }
 
