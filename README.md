@@ -3,8 +3,8 @@
 > Manage sandbox for coding agents.
 
 `codebox` is a small, focused command-line tool for creating, inspecting, and
-tearing down sandboxes that host autonomous coding agents. It is written in
-Go and intentionally has no runtime dependencies beyond the standard library.
+tearing down sandboxes that host autonomous coding agents. It is written in Go
+and intentionally has no runtime dependencies beyond the standard library.
 
 ## Design principles
 
@@ -16,11 +16,11 @@ Go and intentionally has no runtime dependencies beyond the standard library.
 - **SSH as the transport.** Every sandbox is an SSH endpoint, so `git`,
   `rsync`, `scp`, `sshfs`, and IDE remote plugins work out of the box.
 - **Reachable through `ProxyJump`.** Sandboxes behind a bastion or gateway
-  are first-class — same UX as a directly reachable one.
+  are first-class — same UX as a directly reachable host.
 - **Opinionated defaults.** Sensible base images, tooling, and shell/editor
   configuration ship by default. Override when you need to.
 
-## Prerequisite
+## Prerequisites
 
 - [Go](https://go.dev/dl/) **1.26.x** or newer.
 - GNU `make` (any reasonably recent version).
@@ -50,7 +50,7 @@ install -m 0755 bin/codebox /usr/local/bin/codebox
 A typical end-to-end flow:
 
 ```sh
-cd my-repo
+cd my-repo                                      # cd to a git repo
 codebox create demo --python=3.14 --claude      # start sandbox with Python 3.14 & Claude Code
 codebox git push demo origin/main:issue-1234    # origin/main → ~/source as issue-1234
 codebox shell demo                              # ssh in
@@ -58,6 +58,26 @@ codebox shell demo                              # ssh in
 codebox git pull demo issue-1234                # issue-1234 → demo/issue-1234
 codebox delete demo                             # stop and remove the sandbox
 ```
+
+### Advanced usage
+
+Create a `.codebox.conf`:
+```yaml
+args:
+  create:
+    - python=3.14
+    - claude
+    - claude-credentials
+```
+then use the `workflow` shortcut:
+```sh
+codebox workflow origin/main:issue-1234         # create, git push, and shell in one command
+# inside the sandbox: let Claude (or you) write the commits
+codebox git pull demo issue-1234                # issue-1234 → issue-1234/issue-1234
+codebox delete issue-1234                       # stop and remove the sandbox
+```
+> HINT: You can run multiple sandboxes at the same time.
+
 
 For the full picture:
 

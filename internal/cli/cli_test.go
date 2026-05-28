@@ -111,6 +111,7 @@ func TestRun_SubcommandHelpFormsAreIdentical(t *testing.T) {
 		"git",
 		"mount",
 		"umount",
+		"workflow",
 		"completion",
 	}
 	for _, c := range cmds {

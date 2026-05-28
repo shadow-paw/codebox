@@ -49,8 +49,10 @@ func loadFile(path string, cfg *Config) error {
 //
 // Entries in the "all" section become persistent root flags and are
 // prepended before the subcommand. Entries in the "create" section are
-// inserted immediately after the "create" token. In both cases, flags
-// already present in cliArgs are never duplicated.
+// inserted immediately after the "create" (or "workflow") token —
+// workflow runs create internally and surfaces the same flag set, so
+// create-only settings apply to it too. In both cases, flags already
+// present in cliArgs are never duplicated.
 func InjectArgs(cliArgs []string, global, project Config) []string {
 	allMerged := mergeArgLists(global.Args.All, project.Args.All)
 	createMerged := mergeArgLists(global.Args.Create, project.Args.Create)
@@ -60,7 +62,8 @@ func InjectArgs(cliArgs []string, global, project Config) []string {
 	extraAll := filterArgs(allMerged, explicit)
 
 	var extraCreate []string
-	if detectSubcmd(cliArgs) == "create" {
+	sub := detectSubcmd(cliArgs)
+	if sub == "create" || sub == "workflow" {
 		extraCreate = filterArgs(createMerged, explicit)
 	}
 
@@ -68,7 +71,7 @@ func InjectArgs(cliArgs []string, global, project Config) []string {
 		return cliArgs
 	}
 
-	return inject(cliArgs, extraAll, extraCreate)
+	return inject(cliArgs, extraAll, extraCreate, sub)
 }
 
 // mergeArgLists returns the union of global and project arg lists.
@@ -112,29 +115,31 @@ func filterArgs(args []string, explicit map[string]bool) []string {
 }
 
 // inject prepends extraAll before cliArgs and inserts extraCreate
-// immediately after the "create" token in cliArgs.
-func inject(cliArgs, extraAll, extraCreate []string) []string {
+// immediately after the subcmd token in cliArgs (typically "create" or
+// "workflow"). When subcmd is empty or absent from cliArgs, the
+// extraCreate slice is silently dropped — it has no anchor to attach to.
+func inject(cliArgs, extraAll, extraCreate []string, subcmd string) []string {
 	result := make([]string, 0, len(cliArgs)+len(extraAll)+len(extraCreate))
 	result = append(result, extraAll...)
 
-	if len(extraCreate) == 0 {
+	if len(extraCreate) == 0 || subcmd == "" {
 		return append(result, cliArgs...)
 	}
 
-	createIdx := -1
+	idx := -1
 	for i, a := range cliArgs {
-		if a == "create" {
-			createIdx = i
+		if a == subcmd {
+			idx = i
 			break
 		}
 	}
-	if createIdx < 0 {
+	if idx < 0 {
 		return append(result, cliArgs...)
 	}
 
-	result = append(result, cliArgs[:createIdx+1]...)
+	result = append(result, cliArgs[:idx+1]...)
 	result = append(result, extraCreate...)
-	result = append(result, cliArgs[createIdx+1:]...)
+	result = append(result, cliArgs[idx+1:]...)
 	return result
 }
 

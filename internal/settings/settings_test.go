@@ -118,6 +118,18 @@ func TestInjectArgs(t *testing.T) {
 			global: configWith(nil, []string{"python=3.14"}),
 			want:   []string{"--orchestrator", "docker", "create", "--python=3.14", "mybox"},
 		},
+		{
+			name:   "create settings injected after workflow token",
+			cli:    []string{"workflow", "origin/main:demo"},
+			global: configWith(nil, []string{"python=3.14", "claude"}),
+			want:   []string{"workflow", "--python=3.14", "--claude", "origin/main:demo"},
+		},
+		{
+			name:   "all and create settings both apply to workflow",
+			cli:    []string{"workflow", "origin/main:demo"},
+			global: configWith([]string{"orchestrator=podman"}, []string{"claude"}),
+			want:   []string{"--orchestrator=podman", "workflow", "--claude", "origin/main:demo"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
