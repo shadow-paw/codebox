@@ -68,9 +68,14 @@ func (e *Engine) Remove(instance string) string {
 }
 
 // Untag returns the shell command that strips every tag from the image
-// codebox built for instance.
+// codebox built for instance. Docker has no `untag` verb, so there we
+// fall back to `rmi`, which deletes the image by tag.
 func (e *Engine) Untag(instance string) string {
-	return fmt.Sprintf("%s untag %s", e.bin, shquote(instance))
+	verb := "untag"
+	if e.bin == "docker" {
+		verb = "rmi"
+	}
+	return fmt.Sprintf("%s %s %s", e.bin, verb, shquote(instance))
 }
 
 // HostPort returns the shell command that prints the host-published

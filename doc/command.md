@@ -628,8 +628,9 @@ rsync --verbose --archive --compress --update --progress \
    are skipped.
 5. **Remove.** Codebox prints `Deleting container "NAME"...` and runs
    `<engine> rm NAME`.
-6. **Untag.** `<engine> untag NAME` is run silently to drop every tag
-   on the image codebox built for the instance.
+6. **Untag.** `podman untag NAME` (or `docker rmi NAME`, since docker
+   has no `untag` verb) is run silently to drop every tag on the image
+   codebox built for the instance.
 6. **Local git remote cleanup.** `git remote get-url codebox-NAME` is
    run in the operator's current directory; if it succeeds (i.e. the
    matching instance remote is still wired up from an earlier

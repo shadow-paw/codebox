@@ -155,3 +155,11 @@ func TestUntag_QuotesInstanceName(t *testing.T) {
 		t.Errorf("Untag should shell-quote the instance name: %s", got)
 	}
 }
+
+func TestUntag_DockerUsesRmi(t *testing.T) {
+	t.Parallel()
+	e, _ := container.New("docker")
+	if got := e.Untag("demo"); got != "docker rmi 'demo'" {
+		t.Errorf("Untag = %q, want %q", got, "docker rmi 'demo'")
+	}
+}
