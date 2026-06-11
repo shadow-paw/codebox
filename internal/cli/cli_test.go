@@ -592,7 +592,9 @@ func TestCreate_HelpShowsSupportedSections(t *testing.T) {
 		"Claude Code",
 		"--claude-credentials",
 		"OpenAI Codex CLI",
+		"--codex-credentials",
 		"opencode",
+		"--opencode-credentials",
 		"PostgreSQL",
 		"--https-proxy=URL",
 	} {
@@ -663,7 +665,9 @@ func TestCreate_FlagOrderMatchesSpec(t *testing.T) {
 		"--claude",
 		"--claude-credentials",
 		"--codex",
+		"--codex-credentials",
 		"--opencode",
+		"--opencode-credentials",
 		"--podman",
 		"--psql",
 		"--tmux",
@@ -696,68 +700,48 @@ func TestCreate_AutoDetectAmbiguous(t *testing.T) {
 	}
 }
 
-// TestCreate_RejectsUnsupportedAgentFlags pins the contract that the
-// agent flags fail fast until their installers ship. The flag surface
-// is preserved (they still parse) but invoking them errors out.
-// `--claude` and `--podman` have shipped — they are exercised by their
-// own tests — so they are not in this list.
-func TestCreate_RejectsUnsupportedAgentFlags(t *testing.T) {
-	for _, flag := range []string{"--codex", "--opencode"} {
+// TestCreate_AgentFlagsAreAllSupported pins that every agent flag now
+// ships an installer: enabling them must not fail fast with a "not yet
+// supported" rejection. The command still errors later (no orchestrator
+// in the test environment), but never at the flag-validation gate. This
+// guards against accidentally re-introducing the rejection that used to
+// cover --codex and --opencode.
+func TestCreate_AgentFlagsAreAllSupported(t *testing.T) {
+	home := withFakeHome(t)
+	writePub(t, home, "id_ed25519.pub", "ssh-ed25519 AAAA k")
+
+	var so, se bytes.Buffer
+	cli.Run(context.Background(),
+		[]string{"create", "demo", "--claude", "--codex", "--opencode"}, &so, &se)
+	if strings.Contains(se.String(), "not yet supported") {
+		t.Errorf("no agent flag should be rejected as unsupported, got:\n%s", se.String())
+	}
+}
+
+// TestCreate_AgentCredentialsIgnoredWithoutAgent pins the contract that a
+// *-credentials flag without its agent is silently ignored, not an error:
+// the command must pass the flag-validation gate (it still fails later in
+// the test environment because there is no orchestrator, but never with a
+// "requires" message). This covers --claude-credentials, which previously
+// errored, alongside the codex/opencode variants.
+func TestCreate_AgentCredentialsIgnoredWithoutAgent(t *testing.T) {
+	for _, flag := range []string{
+		"--claude-credentials",
+		"--codex-credentials",
+		"--opencode-credentials",
+	} {
 		flag := flag
 		t.Run(flag, func(t *testing.T) {
 			home := withFakeHome(t)
 			writePub(t, home, "id_ed25519.pub", "ssh-ed25519 AAAA k")
 
 			var so, se bytes.Buffer
-			code := cli.Run(context.Background(),
-				[]string{"create", "demo", flag}, &so, &se)
-			if code == 0 {
-				t.Fatalf("exit = 0, want non-zero for %s", flag)
-			}
-			if !strings.Contains(se.String(), flag) || !strings.Contains(se.String(), "not yet supported") {
-				t.Errorf("stderr should name %s as unsupported, got:\n%s", flag, se.String())
+			cli.Run(context.Background(), []string{"create", "demo", flag}, &so, &se)
+			if strings.Contains(se.String(), "requires") {
+				t.Errorf("%s without its agent should be ignored, not rejected; got:\n%s",
+					flag, se.String())
 			}
 		})
-	}
-}
-
-// TestCreate_RejectsUnsupportedAgentFlags_NamesAll surfaces every
-// unsupported flag in one error rather than one per invocation.
-func TestCreate_RejectsUnsupportedAgentFlags_NamesAll(t *testing.T) {
-	home := withFakeHome(t)
-	writePub(t, home, "id_ed25519.pub", "ssh-ed25519 AAAA k")
-
-	var so, se bytes.Buffer
-	code := cli.Run(context.Background(),
-		[]string{"create", "demo", "--codex", "--opencode"}, &so, &se)
-	if code == 0 {
-		t.Fatalf("exit = 0, want non-zero when multiple unsupported flags are set")
-	}
-	for _, want := range []string{"--codex", "--opencode", "not yet supported"} {
-		if !strings.Contains(se.String(), want) {
-			t.Errorf("stderr should mention %q, got:\n%s", want, se.String())
-		}
-	}
-}
-
-// TestCreate_ClaudeCredentialsRequiresClaude pins the contract that
-// --claude-credentials cannot be used without --claude — pushing
-// credentials to an instance with no Claude install is meaningless and
-// should fail before any orchestrator command runs.
-func TestCreate_ClaudeCredentialsRequiresClaude(t *testing.T) {
-	home := withFakeHome(t)
-	writePub(t, home, "id_ed25519.pub", "ssh-ed25519 AAAA k")
-
-	var so, se bytes.Buffer
-	code := cli.Run(context.Background(),
-		[]string{"create", "demo", "--claude-credentials"}, &so, &se)
-	if code == 0 {
-		t.Fatalf("exit = 0, want non-zero when --claude-credentials is used without --claude")
-	}
-	for _, want := range []string{"--claude-credentials", "--claude"} {
-		if !strings.Contains(se.String(), want) {
-			t.Errorf("stderr should mention %q, got:\n%s", want, se.String())
-		}
 	}
 }
 

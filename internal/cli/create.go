@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -14,21 +13,23 @@ import (
 
 type createOpts struct {
 	commonOpts
-	instance          string
-	rebuild           bool
-	httpsProxy        string
-	osImage           string
-	python            string
-	node              string
-	golang            string
-	dotnet            string
-	claude            bool
-	claudeCredentials bool
-	codex             bool
-	opencode          bool
-	podman            bool
-	psql              bool
-	tmux              bool
+	instance            string
+	rebuild             bool
+	httpsProxy          string
+	osImage             string
+	python              string
+	node                string
+	golang              string
+	dotnet              string
+	claude              bool
+	claudeCredentials   bool
+	codex               bool
+	codexCredentials    bool
+	opencode            bool
+	opencodeCredentials bool
+	podman              bool
+	psql                bool
+	tmux                bool
 }
 
 const createHelpFooter = `
@@ -49,10 +50,16 @@ Languages:
   --dotnet   8, 10
 
 Agents:
-  --claude               Claude Code (also writes /home/user/.claude.json onboarding flag)
-  --claude-credentials   Copy ~/.claude/.credentials.json into the instance (requires --claude)
-  --codex                OpenAI Codex CLI
-  --opencode             opencode
+  --claude                 Claude Code (also writes /home/user/.claude.json onboarding flag)
+  --claude-credentials     Copy ~/.claude/.credentials.json into the instance (ignored unless --claude)
+  --codex                  OpenAI Codex CLI
+  --codex-credentials      Copy ~/.codex/auth.json into the instance (ignored unless --codex)
+  --opencode               opencode
+  --opencode-credentials   Copy ~/.local/share/opencode/auth.json into the instance (ignored unless --opencode)
+
+  Agent flags are on/off toggles: --claude (or --claude=true) enables,
+  --claude=false disables (likewise --codex / --opencode). Pass =true|false
+  to override a default set in .codebox.conf.
 
 Tools:
   --podman   Rootless Podman (inside the instance)
@@ -61,7 +68,7 @@ Tools:
 
 Network:
   --https-proxy=URL   Export HTTPS_PROXY=URL from the in-container user login profile
-                      (also exported during the Claude install so the curl pipeline routes through it)
+                      (also exported during agent installs so their curl pipelines route through it)
 `
 
 const createHelpTemplate = `{{with (or .Long .Short)}}{{. | trimTrailingWhitespaces}}
@@ -92,7 +99,7 @@ func newCreateCmd() *cobra.Command {
 	f.BoolVar(&opts.rebuild, "rebuild", false,
 		"Force a rebuild of the base image even if a cached one exists")
 	f.StringVar(&opts.httpsProxy, "https-proxy", "",
-		"Export HTTPS_PROXY=URL from the in-container user login profile (also used to install Claude)")
+		"Export HTTPS_PROXY=URL from the in-container user login profile (also used for agent installs)")
 	f.StringVar(&opts.osImage, "os", "debian_13",
 		"Base OS image (debian_12, debian_13, ubuntu_24, ubuntu_26, redhat_10)")
 	f.StringVar(&opts.python, "python", "",
@@ -106,11 +113,15 @@ func newCreateCmd() *cobra.Command {
 	f.BoolVar(&opts.claude, "claude", false,
 		"Install Claude Code")
 	f.BoolVar(&opts.claudeCredentials, "claude-credentials", false,
-		"Copy ~/.claude/.credentials.json into the instance after it starts (requires --claude)")
+		"Copy ~/.claude/.credentials.json into the instance after it starts (ignored unless --claude)")
 	f.BoolVar(&opts.codex, "codex", false,
 		"Install OpenAI Codex CLI")
+	f.BoolVar(&opts.codexCredentials, "codex-credentials", false,
+		"Copy ~/.codex/auth.json into the instance after it starts (ignored unless --codex)")
 	f.BoolVar(&opts.opencode, "opencode", false,
 		"Install opencode")
+	f.BoolVar(&opts.opencodeCredentials, "opencode-credentials", false,
+		"Copy ~/.local/share/opencode/auth.json into the instance after it starts (ignored unless --opencode)")
 	f.BoolVar(&opts.podman, "podman", false,
 		"Install rootless Podman inside the instance")
 	f.BoolVar(&opts.psql, "psql", false,
@@ -149,51 +160,30 @@ func registerCreateValueCompletions(cmd *cobra.Command) {
 }
 
 func runCreate(ctx context.Context, out io.Writer, opts createOpts) error {
-	if err := rejectUnsupportedFlags(opts); err != nil {
-		return err
-	}
-	if opts.claudeCredentials && !opts.claude {
-		return fmt.Errorf("--claude-credentials requires --claude")
-	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("locate home directory: %w", err)
 	}
 	return app.New(home).Create(ctx, out, app.CreateRequest{
-		Instance:          opts.instance,
-		Orchestrator:      opts.orchestrator,
-		OS:                opts.osImage,
-		InstanceKey:       opts.instanceKey,
-		Remote:            opts.remote,
-		Rebuild:           opts.rebuild,
-		HTTPSProxy:        opts.httpsProxy,
-		Python:            opts.python,
-		Node:              opts.node,
-		Golang:            opts.golang,
-		Dotnet:            opts.dotnet,
-		Claude:            opts.claude,
-		ClaudeCredentials: opts.claudeCredentials,
-		Psql:              opts.psql,
-		Tmux:              opts.tmux,
-		Podman:            opts.podman,
+		Instance:            opts.instance,
+		Orchestrator:        opts.orchestrator,
+		OS:                  opts.osImage,
+		InstanceKey:         opts.instanceKey,
+		Remote:              opts.remote,
+		Rebuild:             opts.rebuild,
+		HTTPSProxy:          opts.httpsProxy,
+		Python:              opts.python,
+		Node:                opts.node,
+		Golang:              opts.golang,
+		Dotnet:              opts.dotnet,
+		Claude:              opts.claude,
+		ClaudeCredentials:   opts.claudeCredentials,
+		Codex:               opts.codex,
+		CodexCredentials:    opts.codexCredentials,
+		Opencode:            opts.opencode,
+		OpencodeCredentials: opts.opencodeCredentials,
+		Psql:                opts.psql,
+		Tmux:                opts.tmux,
+		Podman:              opts.podman,
 	})
-}
-
-// rejectUnsupportedFlags fails fast when the operator enables a flag
-// whose installer has not yet been implemented. The flags are kept on
-// the surface so help text and shell completion stay stable, but
-// invoking them errors out instead of silently producing an image
-// without the requested tool.
-func rejectUnsupportedFlags(opts createOpts) error {
-	var names []string
-	if opts.codex {
-		names = append(names, "--codex")
-	}
-	if opts.opencode {
-		names = append(names, "--opencode")
-	}
-	if len(names) == 0 {
-		return nil
-	}
-	return fmt.Errorf("%s not yet supported", strings.Join(names, ", "))
 }

@@ -13,21 +13,23 @@ import (
 
 type workflowOpts struct {
 	commonOpts
-	refspec           string
-	rebuild           bool
-	httpsProxy        string
-	osImage           string
-	python            string
-	node              string
-	golang            string
-	dotnet            string
-	claude            bool
-	claudeCredentials bool
-	codex             bool
-	opencode          bool
-	podman            bool
-	psql              bool
-	tmux              bool
+	refspec             string
+	rebuild             bool
+	httpsProxy          string
+	osImage             string
+	python              string
+	node                string
+	golang              string
+	dotnet              string
+	claude              bool
+	claudeCredentials   bool
+	codex               bool
+	codexCredentials    bool
+	opencode            bool
+	opencodeCredentials bool
+	podman              bool
+	psql                bool
+	tmux                bool
 }
 
 const workflowHelpTemplate = `{{with (or .Long .Short)}}{{. | trimTrailingWhitespaces}}
@@ -56,9 +58,9 @@ func newWorkflowCmd() *cobra.Command {
 			"  codebox git push target_branch REFSPEC\n" +
 			"  codebox shell target_branch\n\n" +
 			"All create-time flags (--os, --python, --claude, …) are accepted\n" +
-			"here and forwarded to the underlying create step. Argument formats\n" +
-			"are validated up front, so a malformed refspec or unsupported flag\n" +
-			"is rejected before any container is built.",
+			"here and forwarded to the underlying create step. The refspec is\n" +
+			"validated up front, so a malformed one is rejected before any\n" +
+			"container is built.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.commonOpts = readCommonOpts(cmd)
@@ -73,7 +75,7 @@ func newWorkflowCmd() *cobra.Command {
 	f.BoolVar(&opts.rebuild, "rebuild", false,
 		"Force a rebuild of the base image even if a cached one exists")
 	f.StringVar(&opts.httpsProxy, "https-proxy", "",
-		"Export HTTPS_PROXY=URL from the in-container user login profile (also used to install Claude)")
+		"Export HTTPS_PROXY=URL from the in-container user login profile (also used for agent installs)")
 	f.StringVar(&opts.osImage, "os", "debian_13",
 		"Base OS image (debian_12, debian_13, ubuntu_24, ubuntu_26, redhat_10)")
 	f.StringVar(&opts.python, "python", "",
@@ -87,11 +89,15 @@ func newWorkflowCmd() *cobra.Command {
 	f.BoolVar(&opts.claude, "claude", false,
 		"Install Claude Code")
 	f.BoolVar(&opts.claudeCredentials, "claude-credentials", false,
-		"Copy ~/.claude/.credentials.json into the instance after it starts (requires --claude)")
+		"Copy ~/.claude/.credentials.json into the instance after it starts (ignored unless --claude)")
 	f.BoolVar(&opts.codex, "codex", false,
 		"Install OpenAI Codex CLI")
+	f.BoolVar(&opts.codexCredentials, "codex-credentials", false,
+		"Copy ~/.codex/auth.json into the instance after it starts (ignored unless --codex)")
 	f.BoolVar(&opts.opencode, "opencode", false,
 		"Install opencode")
+	f.BoolVar(&opts.opencodeCredentials, "opencode-credentials", false,
+		"Copy ~/.local/share/opencode/auth.json into the instance after it starts (ignored unless --opencode)")
 	f.BoolVar(&opts.podman, "podman", false,
 		"Install rootless Podman inside the instance")
 	f.BoolVar(&opts.psql, "psql", false,
@@ -130,12 +136,6 @@ func runWorkflow(
 	stdout, stderr io.Writer,
 	opts workflowOpts,
 ) error {
-	if err := rejectUnsupportedWorkflowFlags(opts); err != nil {
-		return err
-	}
-	if opts.claudeCredentials && !opts.claude {
-		return fmt.Errorf("--claude-credentials requires --claude")
-	}
 	if err := requireGitCwd(); err != nil {
 		return err
 	}
@@ -144,31 +144,25 @@ func runWorkflow(
 		return fmt.Errorf("locate home directory: %w", err)
 	}
 	return app.New(home).Workflow(ctx, stdin, stdout, stderr, app.WorkflowRequest{
-		Orchestrator:      opts.orchestrator,
-		Remote:            opts.remote,
-		InstanceKey:       opts.instanceKey,
-		Refspec:           opts.refspec,
-		OS:                opts.osImage,
-		Rebuild:           opts.rebuild,
-		HTTPSProxy:        opts.httpsProxy,
-		Python:            opts.python,
-		Node:              opts.node,
-		Golang:            opts.golang,
-		Dotnet:            opts.dotnet,
-		Claude:            opts.claude,
-		ClaudeCredentials: opts.claudeCredentials,
-		Psql:              opts.psql,
-		Tmux:              opts.tmux,
-		Podman:            opts.podman,
-	})
-}
-
-// rejectUnsupportedWorkflowFlags mirrors rejectUnsupportedFlags on
-// create — workflow surfaces the same agent/tool flags and must reject
-// the ones whose installers have not yet shipped.
-func rejectUnsupportedWorkflowFlags(opts workflowOpts) error {
-	return rejectUnsupportedFlags(createOpts{
-		codex:    opts.codex,
-		opencode: opts.opencode,
+		Orchestrator:        opts.orchestrator,
+		Remote:              opts.remote,
+		InstanceKey:         opts.instanceKey,
+		Refspec:             opts.refspec,
+		OS:                  opts.osImage,
+		Rebuild:             opts.rebuild,
+		HTTPSProxy:          opts.httpsProxy,
+		Python:              opts.python,
+		Node:                opts.node,
+		Golang:              opts.golang,
+		Dotnet:              opts.dotnet,
+		Claude:              opts.claude,
+		ClaudeCredentials:   opts.claudeCredentials,
+		Codex:               opts.codex,
+		CodexCredentials:    opts.codexCredentials,
+		Opencode:            opts.opencode,
+		OpencodeCredentials: opts.opencodeCredentials,
+		Psql:                opts.psql,
+		Tmux:                opts.tmux,
+		Podman:              opts.podman,
 	})
 }

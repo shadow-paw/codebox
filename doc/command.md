@@ -30,6 +30,17 @@ codebox [command] [flags] [arguments]
 | `--remote`       | string   | *(unset)* | `user@host`. When omitted, the orchestrator runs on the local machine. SSH is the transport; `ProxyJump` configured in `~/.ssh/config` is honoured automatically. |
 | `--instance-key` | path     | *(auto)* | SSH private key used to log into the instance. When unset, codebox tries the user's default keys. |
 
+Default flags can be set in a `.codebox.conf` file (YAML) so they apply
+without retyping. Entries under `args.all` become persistent root flags;
+entries under `args.create` are passed to `create` (and to `workflow`,
+which runs `create` internally). Each entry is a bare flag name (`claude`)
+or a `name=value` pair (`python=3.14`, `codex=false`). codebox reads the
+global `~/.codebox.conf` first, then the project `./.codebox.conf`, then
+the command line, with **later sources overriding earlier** ones by flag
+name — so the command line always wins, the project file beats the global
+file, and an explicit `--claude=false` overrides a `claude` default from
+either file.
+
 Exit codes:
 
 | Code | Meaning |
@@ -50,7 +61,9 @@ codebox create demo \
   --https-proxy=http://proxy.corp:3128 \
   --os=debian_12 \
   --python=3.14 --node=24 --golang=1.26.0 --dotnet=10 \
-  --claude --claude-credentials --codex --opencode --podman --psql --tmux
+  --claude --claude-credentials \
+  --codex --codex-credentials --opencode --opencode-credentials \
+  --podman --psql --tmux
 ```
 
 Flags (in help order):
@@ -61,19 +74,33 @@ Flags (in help order):
 | `--remote`              | string | *(local)*      | Provision on a remote host (`user@host`). |
 | `--instance-key`        | path   | *(auto)*       | SSH key for logging into the new instance. |
 | `--rebuild`             | bool   | `false`        | Force a rebuild of the base image even if a cached one exists. |
-| `--https-proxy`         | string | *(unset)*      | Append `export HTTPS_PROXY="<value>"` to the in-container user's login profile so interactive shells route HTTPS through the configured proxy. Other build-time downloads (apt, dnf, Go, .NET, uv, nvm) still go through the builder host's network — only the operator's shell inside the running container sees the proxy. The one exception is the `--claude` install layer, which exports `HTTPS_PROXY` inline so curl (and any sub-downloads the install script performs) route through the proxy too. The value is not validated; pass it the way curl would accept it (`http://proxy:3128`, `http://user:pw@proxy:3128`, ...). |
+| `--https-proxy`         | string | *(unset)*      | Append `export HTTPS_PROXY="<value>"` to the in-container user's login profile so interactive shells route HTTPS through the configured proxy. Other build-time downloads (apt, dnf, Go, .NET, uv, nvm) still go through the builder host's network — only the operator's shell inside the running container sees the proxy. The exception is the agent install layers (`--claude`, `--codex`, `--opencode`), which export `HTTPS_PROXY` inline so curl (and any sub-downloads the install scripts perform) route through the proxy too. The value is not validated; pass it the way curl would accept it (`http://proxy:3128`, `http://user:pw@proxy:3128`, ...). |
 | `--os`                  | enum   | `debian_13`    | Base OS image (`debian_12`, `debian_13`, `ubuntu_24`, `ubuntu_26`, `redhat_10`). |
 | `--python`              | enum   | *(none)*       | Install Python at `3.12`, `3.13`, or `3.14`. |
 | `--node`                | enum   | *(none)*       | Install Node.js at major version `24`, `25`, or `26`. |
 | `--golang`              | enum   | *(none)*       | Install Go at version `1.26.0`. |
 | `--dotnet`              | enum   | *(none)*       | Install .NET at version `8` or `10`. |
 | `--claude`              | bool   | `false`        | Install [Claude Code](https://claude.ai/code) via Anthropic's native installer. Also drops `/home/user/.claude.json` with the onboarding flag pre-set so the CLI does not prompt on first run inside the sandbox. |
-| `--claude-credentials`  | bool   | `false`        | After the container starts, rsync `~/.claude/.credentials.json` from the operator's machine into `/home/user/.claude/.credentials.json` inside the instance. Requires `--claude` and fails fast if it is not set. Credentials are **never** baked into the image. |
-| `--codex`               | bool   | `false`        | Install OpenAI Codex CLI. |
-| `--opencode`            | bool   | `false`        | Install opencode. |
+| `--claude-credentials`  | bool   | `false`        | After the container starts, rsync `~/.claude/.credentials.json` from the operator's machine into `/home/user/.claude/.credentials.json` inside the instance. **Ignored unless `--claude` is set.** When `--claude` is set, a missing source file fails fast (before the build). Credentials are **never** baked into the image. |
+| `--codex`               | bool   | `false`        | Install the [OpenAI Codex CLI](https://github.com/openai/codex) via its native installer (binary lands in `$HOME/.local/bin`, shared with Claude/uv on the login profile's PATH). When `--https-proxy` is set, the proxy is exported inline so the install download routes through it. Also labels the container `codex=true`. After the container starts, if `~/.codex/config.toml` exists on the operator's machine it is copied into `/home/user/.codex/config.toml` inside the instance; a missing file is silently skipped. The config is **never** baked into the image. |
+| `--codex-credentials`   | bool   | `false`        | After the container starts, if `~/.codex/auth.json` exists on the operator's machine it is copied into `/home/user/.codex/auth.json` inside the instance; a missing file is silently skipped. **Ignored unless `--codex` is set.** Credentials are **never** baked into the image. |
+| `--opencode`            | bool   | `false`        | Install [opencode](https://opencode.ai) via its native installer (binary lands in `$HOME/.opencode/bin`, added to the login profile's PATH). Also labels the container `opencode=true`. After the container starts, if `~/.config/opencode/opencode.json` exists on the operator's machine it is copied into `/home/user/.config/opencode/opencode.json` inside the instance; a missing file is silently skipped. The config is **never** baked into the image. |
+| `--opencode-credentials`| bool   | `false`        | After the container starts, if `~/.local/share/opencode/auth.json` exists on the operator's machine it is copied into `/home/user/.local/share/opencode/auth.json` inside the instance; a missing file is silently skipped. **Ignored unless `--opencode` is set.** Credentials are **never** baked into the image. |
 | `--podman`              | bool   | `false`        | Install rootless Podman (plus `podman-compose` and the rootless networking/storage stack, including `passt` for pasta networking) inside the instance, configure `/etc/subuid`, `/etc/subgid`, and the per-user `containers.conf` / `registries.conf`, start the container with the device/capability/security-opt flags nested containers need, and run `podman system migrate` once the container is up. |
 | `--psql`                | bool   | `false`        | Install the psql PostgreSQL client. |
-| `--tmux`                | bool   | `false`        | Install tmux and label the container `tmux=true`. Accepts `--tmux` or `--tmux=true|false`. `codebox shell` reads that label back and launches tmux (a fresh session split horizontally into two panes, both rooted at `~/source`) instead of a bare login shell. When an agent is also enabled (e.g. `--claude`), the container carries a matching agent label (`claude=true`) and that agent runs in the right-hand pane. |
+| `--tmux`                | bool   | `false`        | Install tmux and label the container `tmux=true`. Accepts `--tmux` or `--tmux=true|false`. `codebox shell` reads that label back and launches tmux (a fresh session split horizontally into two panes, both rooted at `~/source`) instead of a bare login shell. When **exactly one** agent is also enabled (e.g. `--claude`, `--codex`, or `--opencode`), the container carries a matching agent label (`claude=true`, `codex=true`, `opencode=true`) and that agent runs in the right-hand pane; with several agents installed, codebox cannot choose, so both panes stay plain shells. |
+
+All boolean flags are on/off toggles that accept the explicit
+`--flag=true|false` form: `--claude` (equivalently `--claude=true`)
+enables an agent, while `--claude=false` disables it — and the same for
+`--codex` / `--opencode`. This matters together with `.codebox.conf`: a
+default such as `claude` listed under `args.create` enables the agent for
+every `create`/`workflow` in that scope, and passing `--claude=false` on
+the command line overrides it for a single run (command line beats
+project config beats global config — see
+[Common conventions](#common-conventions) for the precedence rules).
+The same toggle/override applies to every bool flag (`--podman`, `--tmux`,
+the `*-credentials` flags, …).
 
 The `--help` output for `create` ends with six footer sections that
 restate the legal values for each kind of flag:
@@ -120,12 +147,13 @@ home directory when `~/source` does not exist yet.
 If the instance was created with `--tmux` (it carries the `tmux=true`
 container label), `codebox shell` launches tmux instead of a bare login
 shell: a fresh session split horizontally into two panes, both rooted at
-`~/source`. When the instance also carries an agent label (e.g.
-`claude=true`, set when it was created with an agent such as `--claude`),
-that agent runs in the right-hand pane — through a login shell so its
-install directory is on `PATH` — while the left pane is an ordinary
-shell. When several agent labels are set, claude takes precedence, then
-codex, then opencode.
+`~/source`. When the instance carries **exactly one** agent label
+(`claude=true`, `codex=true`, or `opencode=true`, set when it was created
+with `--claude`, `--codex`, or `--opencode`), that agent runs in the
+right-hand pane — through a login shell so its install directory is on `PATH` —
+while the left pane is an ordinary shell. When no agent is installed, or
+when several are, codebox cannot pick one for the operator, so both panes
+stay plain shells.
 
 ```
 codebox shell demo \
@@ -474,12 +502,11 @@ codebox shell target_branch
 ```
 
 Argument formats — the refspec and every flag — are validated up
-front, so a malformed refspec or an unsupported flag (`--codex`,
-`--opencode`) is rejected before any container is built. All
-create-time flags are forwarded verbatim to the underlying `create`
+front, so a malformed refspec is rejected before any container is built.
+All create-time flags are forwarded verbatim to the underlying `create`
 step; see [`create`](#codebox-create-instance) for their full
 semantics. When `--tmux` is set, the final `shell` step launches tmux
-in `~/source` (with any installed agent in the right-hand pane).
+in `~/source` (with a single installed agent in the right-hand pane).
 
 Flags (in help order):
 
@@ -496,9 +523,11 @@ Flags (in help order):
 | `--golang`              | enum   | *(none)*    | Install Go at version `1.26.0`. |
 | `--dotnet`              | enum   | *(none)*    | Install .NET at version `8` or `10`. |
 | `--claude`              | bool   | `false`     | Install Claude Code. |
-| `--claude-credentials`  | bool   | `false`     | Copy `~/.claude/.credentials.json` into the instance after it starts (requires `--claude`). |
-| `--codex`               | bool   | `false`     | Install OpenAI Codex CLI. |
-| `--opencode`            | bool   | `false`     | Install opencode. |
+| `--claude-credentials`  | bool   | `false`     | Copy `~/.claude/.credentials.json` into the instance after it starts (ignored unless `--claude`). |
+| `--codex`               | bool   | `false`     | Install OpenAI Codex CLI (and copy `~/.codex/config.toml` into the instance after it starts, if present). |
+| `--codex-credentials`   | bool   | `false`     | Copy `~/.codex/auth.json` into the instance after it starts, if present (ignored unless `--codex`). |
+| `--opencode`            | bool   | `false`     | Install opencode (and copy `~/.config/opencode/opencode.json` into the instance after it starts, if present). |
+| `--opencode-credentials`| bool   | `false`     | Copy `~/.local/share/opencode/auth.json` into the instance after it starts, if present (ignored unless `--opencode`). |
 | `--podman`              | bool   | `false`     | Install rootless Podman inside the instance. |
 | `--psql`                | bool   | `false`     | Install the psql PostgreSQL client. |
 | `--tmux`                | bool   | `false`     | Install tmux and label the container `tmux=true`; the workflow's `shell` step launches it in `~/source`. Accepts `--tmux` or `--tmux=true|false`. |
@@ -651,9 +680,7 @@ later layer does not invalidate the package install cache:
 6. Init script `/usr/local/bin/codebox-init` that execs `sshd` and
    `sleep infinity`.
 7. Optional language/tool layers (see [Optional toolchains](#optional-toolchains)).
-   Skipped entirely when no flag is set. `--codex` and `--opencode` are
-   flag-bound for forward compatibility but currently fail the command
-   with `<flag> not yet supported` before any orchestrator call.
+   Skipped entirely when no flag is set.
 8. Install the operator's public key into
    `/home/user/.ssh/authorized_keys` (mode 0600, owned by `user`).
 9. `EXPOSE 2222`, `CMD ["/usr/local/bin/codebox-init"]`.
@@ -679,12 +706,14 @@ distros (Red Hat). Below, **PROFILE** refers to whichever file applies.
 | Flag       | Installs |
 | ---------- | -------- |
 | `--psql`   | `postgresql-client` (apt) or `postgresql` (dnf) via the distro package manager. |
-| `--tmux`   | `tmux` via the distro package manager (same name on apt and dnf). The container is additionally labelled `tmux=true`; `codebox shell` reads that label and launches tmux (horizontal split, both panes in `~/source`) on connect. Installed AI agents are recorded as their own boolean labels (e.g. `claude=true`); when one is present `codebox shell` runs that agent in the right-hand pane via a login shell (precedence: claude, codex, opencode). |
+| `--tmux`   | `tmux` via the distro package manager (same name on apt and dnf). The container is additionally labelled `tmux=true`; `codebox shell` reads that label and launches tmux (horizontal split, both panes in `~/source`) on connect. Installed AI agents are recorded as their own boolean labels (e.g. `claude=true`, `codex=true`, `opencode=true`); when **exactly one** is present `codebox shell` runs that agent in the right-hand pane via a login shell. With none or several installed it cannot choose, so both panes stay plain shells. |
 | `--golang=VER` | Downloads `https://go.dev/dl/goVER.linux-${arch}.tar.gz` (arch detected from `uname -m`; `amd64` and `arm64` supported), unpacks it to `/usr/local/go`, and appends `export PATH="/usr/local/go/bin:$PATH"` to **PROFILE**. |
 | `--dotnet=VER` | Runs `https://dot.net/v1/dotnet-install.sh --channel VER.0 --install-dir /usr/local/dotnet`, symlinks the runner to `/usr/local/bin/dotnet`, and appends `DOTNET_ROOT`, `PATH`, and `DOTNET_CLI_TELEMETRY_OPTOUT=1` exports to **PROFILE**. |
 | `--python=VER` | Runs `https://astral.sh/uv/install.sh` as user `user`, then runs `uv python install VER && uv python pin --global VER` to download the prebuilt CPython and set it as the global default for `uv`. (The `export PATH="$HOME/.local/bin:$PATH"` line is emitted once — see `--claude`.) |
 | `--node=VER` | On dnf-family distros, first installs `libatomic` (UBI omits it and recent V8 binaries link against it). Then installs nvm (pinned to `v0.40.1`) as user `user`, and runs `nvm install VER && nvm alias default VER`. |
-| `--claude` | Runs Anthropic's native installer (`curl -fsSL https://claude.ai/install.sh \| bash`) as user `user`. The installer drops the `claude` binary into `$HOME/.local/bin`; the corresponding PATH export is emitted once when `--claude` or `--python` is set. When `--https-proxy` is also set, the proxy is exported inline for this RUN (`export HTTPS_PROXY='URL' && curl ...`) so the install pipeline routes through it. The same layer also drops `/home/user/.claude.json` (owned by `user`) with `{"hasCompletedOnboarding": true, "defaultMode": "bypassPermissions"}` so the CLI skips the first-run prompt inside the sandbox. Credentials are not baked in — pass `--claude-credentials` to push them after the container starts. |
+| `--claude` | Runs Anthropic's native installer (`curl -fsSL https://claude.ai/install.sh \| bash`) as user `user`. The installer drops the `claude` binary into `$HOME/.local/bin`; the corresponding PATH export is emitted once when `--claude`, `--codex`, or `--python` is set. When `--https-proxy` is also set, the proxy is exported inline for this RUN (`export HTTPS_PROXY='URL' && curl ...`) so the install pipeline routes through it. The same layer also drops `/home/user/.claude.json` (owned by `user`) with `{"hasCompletedOnboarding": true, "defaultMode": "bypassPermissions"}` so the CLI skips the first-run prompt inside the sandbox. Credentials are not baked in — pass `--claude-credentials` to push them after the container starts. |
+| `--codex` | Runs the OpenAI Codex CLI's native installer (`curl -fsSL https://chatgpt.com/codex/install.sh \| bash`, which follows the redirect to the latest GitHub release) as user `user`. The installer drops the `codex` binary into `$HOME/.local/bin`, so it shares the single PATH export emitted for that directory (see `--claude`) rather than adding its own. When `--https-proxy` is also set, the proxy is exported inline for this RUN (`export HTTPS_PROXY='URL' && curl ...`) so the install download routes through it. The operator's `~/.codex/config.toml` (and, with `--codex-credentials`, `~/.codex/auth.json`) is not baked in — it is pushed after the container starts when present (see [Codex config & credentials transfer](#codex-config--credentials-transfer)). |
+| `--opencode` | Runs opencode's native installer (`curl -fsSL https://opencode.ai/install \| bash`) as user `user`. The installer drops the `opencode` binary into `$HOME/.opencode/bin`; because it only edits interactive rc files (which login shells skip), the layer appends `export PATH="$HOME/.opencode/bin:$PATH"` to **PROFILE** explicitly. When `--https-proxy` is also set, the proxy is exported inline for this RUN (`export HTTPS_PROXY='URL' && curl ...`). The operator's `opencode.json` (and, with `--opencode-credentials`, `~/.local/share/opencode/auth.json`) is not baked in — it is pushed after the container starts when present (see [opencode config & credentials transfer](#opencode-config--credentials-transfer)). |
 | `--podman` | Installs `podman`, `podman-compose`, and the rootless stack (`passt`, `uidmap` — `shadow-utils` on dnf-family — `fuse-overlayfs`, `nftables`, `aardvark-dns`) as root. On Red Hat `podman-compose` is installed from PyPI via `pip3` (it is not packaged for dnf). The rootless network backend is pasta (from `passt`), which is Podman's default, so no `containers.conf` network key is written. It replaces `/etc/subuid` / `/etc/subgid` with `root:1:65535`, `user:1:999`, `user:1001:64535` (uniform across distros — `user` is UID 1000 everywhere, since Ubuntu's `ubuntu` account is renamed rather than adding a new user), and drops two files under `/home/user/.config/containers/` (owned by `user`): `containers.conf` with `[containers]` `default_sysctls = []`, and `registries.conf` with `[registries.search]` `registries = ['docker.io']` so unqualified `podman pull` names resolve against Docker Hub. The layer is emitted **before** any agent install so an agent can drive containers on its first task. The container is started with `--device /dev/fuse --device /dev/net/tun --cap-add=sys_admin --cap-add=net_admin --cap-add=mknod --security-opt label=disable --security-opt unmask=ALL` and, once running, `podman system migrate` is run inside it (see [the create steps](#codebox-create-instance)) so the nested rootless Podman has what it needs. |
 
 ### HTTPS proxy
@@ -698,10 +727,13 @@ export HTTPS_PROXY="URL"
 to the in-container user's login profile — **PROFILE** as defined
 above (`/home/user/.profile` on apt-family distros,
 `/home/user/.bash_profile` on dnf-family distros). The proxy is **not**
-emitted as an `ENV` directive: image build downloads continue to use
-the builder host's normal network, and the proxy only takes effect
+emitted as an `ENV` directive: most image build downloads continue to
+use the builder host's normal network, and the proxy only takes effect
 once a login shell sources the profile (interactive `codebox shell`
-sessions, ssh login sessions targeting the container).
+sessions, ssh login sessions targeting the container). The one build-time
+exception is the agent install layers (`--claude`, `--codex`,
+`--opencode`), which export `HTTPS_PROXY` inline for their own `curl`
+RUN so the install download routes through the proxy.
 
 Single quotes in the value are shell-escaped before being written so
 the surrounding `echo` invocation survives an embedded apostrophe;
@@ -710,11 +742,10 @@ otherwise the value is passed through verbatim
 
 ### Claude credentials transfer
 
-`--claude-credentials` requires `--claude`. Setting credentials
-without the CLI install is rejected by the CLI parser before any
-work happens (`--claude-credentials requires --claude`). When both
-flags are set, the flag is honoured **after** the container's `run`
-step succeeds. The use-case layer:
+`--claude-credentials` is **ignored unless `--claude`** is also set:
+requesting credentials without the install does nothing (no error, no
+push). When both flags are set, the flag is honoured **after** the
+container's `run` step succeeds. The use-case layer:
 
 1. `stat`s `~/.claude/.credentials.json` on the operator's machine
    **before** any orchestrator command is issued. A missing or
@@ -745,6 +776,63 @@ rsync --verbose --archive --compress --update --progress \
   side even when neither `--claude` nor a previous run laid it down.
 - `--chmod=F0600` pins the file mode so the credentials land with the
   same permissions Claude expects on the host.
+
+### Codex config & credentials transfer
+
+`--codex` copies the operator's `~/.codex/config.toml` into the instance
+after the container's `run` step succeeds. This is **best-effort**: the
+config is optional, so a missing source file is silently skipped rather
+than failing the create. When the file is present, the use-case layer
+looks up the host-side sshd port, echoes the assembled rsync command
+bracketed by horizontal rules, runs it locally, and retries exactly once
+after a short wait if the in-container sshd is not yet up — the same
+single-file push used for Claude credentials. The invocation has the
+shape:
+
+```
+rsync --verbose --archive --compress --update --progress \
+  --mkpath --chmod=F0600 \
+  -e 'ssh -o StrictHostKeyChecking=no [-i KEY] [-J Remote] -p PORT' \
+  ~/.codex/config.toml user@localhost:/home/user/.codex/config.toml
+```
+
+`--mkpath` ensures `/home/user/.codex` is created on the receiving side
+when the install layer has not already laid it down.
+
+`--codex-credentials` (ignored unless `--codex` is also set) adds a
+second, identical push of `~/.codex/auth.json` into
+`/home/user/.codex/auth.json`. Credentials are opt-in — copied only when
+the flag is set — but the push is still best-effort: a missing
+`auth.json` is silently skipped. They are **never** baked into the image.
+
+### opencode config & credentials transfer
+
+`--opencode` copies the operator's `~/.config/opencode/opencode.json`
+into the instance after the container's `run` step succeeds. This is
+**best-effort**: the config is optional, so a missing source file is
+silently skipped rather than failing the create. When the file is
+present, the use-case layer looks up the host-side sshd port, echoes the
+assembled rsync command bracketed by horizontal rules, runs it locally,
+and retries exactly once after a short wait if the in-container sshd is
+not yet up — the same single-file push used for Claude credentials. The
+invocation has the shape:
+
+```
+rsync --verbose --archive --compress --update --progress \
+  --mkpath --chmod=F0600 \
+  -e 'ssh -o StrictHostKeyChecking=no [-i KEY] [-J Remote] -p PORT' \
+  ~/.config/opencode/opencode.json user@localhost:/home/user/.config/opencode/opencode.json
+```
+
+`--mkpath` ensures `/home/user/.config/opencode` is created on the
+receiving side when the install layer has not already laid it down.
+
+`--opencode-credentials` (ignored unless `--opencode` is also set) adds a
+second, identical push of `~/.local/share/opencode/auth.json` into
+`/home/user/.local/share/opencode/auth.json`. Credentials are opt-in —
+copied only when the flag is set — but the push is still best-effort: a
+missing `auth.json` is silently skipped. They are **never** baked into
+the image.
 
 ### `--instance-key` resolution
 

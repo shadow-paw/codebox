@@ -505,6 +505,143 @@ func TestGenerate_ClaudeWithPythonSharesPathExport(t *testing.T) {
 	}
 }
 
+// TestGenerate_OpencodeInstall pins the --opencode layer: it runs as
+// USER user, installs via the native installer, and appends the
+// installer's $HOME/.opencode/bin to the login profile's PATH (the
+// installer only edits interactive rc files, which login shells skip).
+func TestGenerate_OpencodeInstall(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", Opencode: true})
+	wants := []string{
+		"USER user",
+		"# Install opencode.",
+		"curl -fsSL https://opencode.ai/install | bash",
+		`echo 'export PATH="$HOME/.opencode/bin:$PATH"' >> /home/user/.profile`,
+		"USER root",
+	}
+	for _, want := range wants {
+		if !strings.Contains(out, want) {
+			t.Errorf("opencode layer missing %q\n%s", want, out)
+		}
+	}
+}
+
+// TestGenerate_OpencodeInstallUsesHTTPSProxy mirrors the Claude proxy
+// contract: --https-proxy is exported inline for the opencode install
+// RUN and never leaks into an ENV directive.
+func TestGenerate_OpencodeInstallUsesHTTPSProxy(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{
+		OS:         "debian_13",
+		Opencode:   true,
+		HTTPSProxy: "http://proxy.corp:3128",
+	})
+	want := "RUN export HTTPS_PROXY='http://proxy.corp:3128' && " +
+		"curl -fsSL https://opencode.ai/install | bash"
+	if !strings.Contains(out, want) {
+		t.Fatalf("opencode install should export HTTPS_PROXY inline:\nwant: %q\nout:\n%s", want, out)
+	}
+	if strings.Contains(out, "ENV HTTPS_PROXY") {
+		t.Fatalf("--https-proxy must not become an ENV directive:\n%s", out)
+	}
+}
+
+// TestGenerate_OpencodeInstall_RedHatProfile pins the per-family profile
+// file: dnf-family distros append the PATH export to .bash_profile.
+func TestGenerate_OpencodeInstall_RedHatProfile(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "redhat_10", Opencode: true})
+	want := `echo 'export PATH="$HOME/.opencode/bin:$PATH"' >> /home/user/.bash_profile`
+	if !strings.Contains(out, want) {
+		t.Fatalf("opencode layer should append PATH export to .bash_profile\n%s", out)
+	}
+}
+
+// TestGenerate_OpencodeOmittedWhenDisabled keeps the opencode install
+// off the no-agent baseline.
+func TestGenerate_OpencodeOmittedWhenDisabled(t *testing.T) {
+	t.Parallel()
+	out := generate(t, "debian_13")
+	if strings.Contains(out, "opencode") {
+		t.Fatalf("opencode must not be referenced without --opencode:\n%s", out)
+	}
+}
+
+// TestGenerate_CodexInstall pins the --codex layer: it runs as USER
+// user, installs via the native installer, and — because the installer
+// drops the binary into $HOME/.local/bin — relies on the shared PATH
+// export rather than emitting its own.
+func TestGenerate_CodexInstall(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", Codex: true})
+	wants := []string{
+		"USER user",
+		"# Install OpenAI Codex CLI.",
+		"curl -fsSL https://chatgpt.com/codex/install.sh | bash",
+		`echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/user/.profile`,
+		"USER root",
+	}
+	for _, want := range wants {
+		if !strings.Contains(out, want) {
+			t.Errorf("Codex layer missing %q\n%s", want, out)
+		}
+	}
+}
+
+// TestGenerate_CodexInstallUsesHTTPSProxy mirrors the Claude proxy
+// contract: --https-proxy is exported inline for the codex install RUN
+// and never leaks into an ENV directive.
+func TestGenerate_CodexInstallUsesHTTPSProxy(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{
+		OS:         "debian_13",
+		Codex:      true,
+		HTTPSProxy: "http://proxy.corp:3128",
+	})
+	want := "RUN export HTTPS_PROXY='http://proxy.corp:3128' && " +
+		"curl -fsSL https://chatgpt.com/codex/install.sh | bash"
+	if !strings.Contains(out, want) {
+		t.Fatalf("Codex install should export HTTPS_PROXY inline:\nwant: %q\nout:\n%s", want, out)
+	}
+	if strings.Contains(out, "ENV HTTPS_PROXY") {
+		t.Fatalf("--https-proxy must not become an ENV directive:\n%s", out)
+	}
+}
+
+// TestGenerate_CodexSharesPathExportWithClaude guards against a duplicate
+// `$HOME/.local/bin` PATH export: both --codex and --claude land binaries
+// there, so the shared line must appear exactly once when both are set.
+func TestGenerate_CodexSharesPathExportWithClaude(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", Codex: true, Claude: true})
+	const line = `echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/user/.profile`
+	if got := strings.Count(out, line); got != 1 {
+		t.Fatalf("expected exactly one PATH export, got %d\n%s", got, out)
+	}
+}
+
+// TestGenerate_CodexAloneExportsPath pins that --codex on its own still
+// adds $HOME/.local/bin to PATH even when neither --claude nor --python
+// is set.
+func TestGenerate_CodexAloneExportsPath(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", Codex: true})
+	const line = `echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/user/.profile`
+	if !strings.Contains(out, line) {
+		t.Fatalf("--codex alone should export $HOME/.local/bin on PATH\n%s", out)
+	}
+}
+
+// TestGenerate_CodexOmittedWhenDisabled keeps the codex install off the
+// no-agent baseline.
+func TestGenerate_CodexOmittedWhenDisabled(t *testing.T) {
+	t.Parallel()
+	out := generate(t, "debian_13")
+	if strings.Contains(out, "codex") {
+		t.Fatalf("codex must not be referenced without --codex:\n%s", out)
+	}
+}
+
 // TestGenerate_PythonAloneStillExportsPath pins that the previous
 // behaviour — `--python` alone adding `$HOME/.local/bin` to PATH — is
 // preserved after the refactor that moved the line out of renderPython.

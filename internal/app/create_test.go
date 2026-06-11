@@ -537,6 +537,7 @@ func TestCreate_ClaudeCredentialsRsyncsAfterRun(t *testing.T) {
 	var out bytes.Buffer
 	err := a.Create(context.Background(), &out, app.CreateRequest{
 		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Claude:            true,
 		ClaudeCredentials: true,
 	})
 	if err != nil {
@@ -582,6 +583,7 @@ func TestCreate_ClaudeCredentialsMissingFileFailsEarly(t *testing.T) {
 
 	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
 		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Claude:            true,
 		ClaudeCredentials: true,
 	})
 	if err == nil {
@@ -593,6 +595,35 @@ func TestCreate_ClaudeCredentialsMissingFileFailsEarly(t *testing.T) {
 	if len(fr.calls) != 0 {
 		t.Errorf("no orchestrator command should run when credentials file is missing; got %d calls",
 			len(fr.calls))
+	}
+}
+
+// TestCreate_ClaudeCredentialsIgnoredWithoutClaude pins that the
+// credentials flag is silently ignored when --claude is not set: even
+// with the source file present, there is no fail-fast stat error and no
+// push (so the run completes with just the four base calls). The same
+// gating covers --codex-credentials / --opencode-credentials.
+func TestCreate_ClaudeCredentialsIgnoredWithoutClaude(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	mustWriteFile(t, filepath.Join(home, ".claude", ".credentials.json"), `{"token":"x"}`)
+
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},
+		reply{},
+		reply{stdout: "abc123\n"},
+		reply{stdout: "demo\n"}, // ps — running check
+	)
+
+	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		ClaudeCredentials: true, // but Claude not set → ignored
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := len(fr.calls); got != 4 {
+		t.Errorf("--claude-credentials without --claude must not push; got %d calls: %+v", got, fr.calls)
 	}
 }
 
@@ -616,6 +647,7 @@ func TestCreate_ClaudeCredentialsRemoteAddsJump(t *testing.T) {
 	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
 		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
 		Remote:            "ops@bastion",
+		Claude:            true,
 		ClaudeCredentials: true,
 	})
 	if err != nil {
@@ -663,6 +695,7 @@ func TestCreate_ClaudeCredentialsRetriesOnceOnConnectFailure(t *testing.T) {
 	var out bytes.Buffer
 	err := a.Create(context.Background(), &out, app.CreateRequest{
 		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Claude:            true,
 		ClaudeCredentials: true,
 	})
 	if err != nil {
@@ -707,6 +740,7 @@ func TestCreate_ClaudeCredentialsBothAttemptsFailSurfacesError(t *testing.T) {
 
 	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
 		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Claude:            true,
 		ClaudeCredentials: true,
 	})
 	if err == nil {
@@ -741,6 +775,366 @@ func TestCreate_ClaudeFlagDoesNotImplyCredentialsRsync(t *testing.T) {
 	if !strings.Contains(fr.calls[1].stdin, "https://claude.ai/install.sh") {
 		t.Errorf("--claude should embed the Claude installer in the Dockerfile:\n%s",
 			fr.calls[1].stdin)
+	}
+}
+
+// TestCreate_OpencodeLabelsContainerAndEmbedsInstaller pins that
+// --opencode both stamps the `opencode=true` metadata label on the
+// container (so `codebox shell` can run it in a tmux pane) and embeds the
+// opencode installer in the generated Dockerfile.
+func TestCreate_OpencodeLabelsContainerAndEmbedsInstaller(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir() // no ~/.config/opencode/opencode.json — push is skipped
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},
+		reply{},
+		reply{stdout: "abc123\n"},
+		reply{stdout: "demo\n"}, // ps — running check
+	)
+
+	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Opencode: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := len(fr.calls); got != 4 {
+		t.Fatalf("--opencode with no config file should not push; got %d calls: %+v", got, fr.calls)
+	}
+	if !strings.Contains(fr.calls[2].cmd, "--label opencode=true") {
+		t.Errorf("run cmd should carry the opencode=true label, got %q", fr.calls[2].cmd)
+	}
+	if !strings.Contains(fr.calls[1].stdin, "https://opencode.ai/install") {
+		t.Errorf("--opencode should embed the opencode installer in the Dockerfile:\n%s",
+			fr.calls[1].stdin)
+	}
+}
+
+// TestCreate_OpencodePushesConfigWhenPresent pins the post-run config
+// copy: when ~/.config/opencode/opencode.json exists on the operator's
+// machine, Create rsyncs it into /home/user/.config/opencode/ inside the
+// instance (the same --mkpath/--chmod single-file push as credentials).
+func TestCreate_OpencodePushesConfigWhenPresent(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	mustWriteFile(t, filepath.Join(home, ".config", "opencode", "opencode.json"), `{"theme":"x"}`)
+
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},         // ps -a
+		reply{},                          // build
+		reply{stdout: "abc123\n"},        // run
+		reply{stdout: "demo\n"},          // ps — running check
+		reply{stdout: "0.0.0.0:33000\n"}, // port lookup
+		reply{},                          // rsync
+	)
+
+	var out bytes.Buffer
+	err := a.Create(context.Background(), &out, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Opencode: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v\nout:\n%s", err, out.String())
+	}
+	if got := len(fr.calls); got != 6 {
+		t.Fatalf("expected 6 runner calls (ps -a, build, run, ps, port, rsync), got %d:\n%+v",
+			got, fr.calls)
+	}
+	rsync := fr.calls[5].cmd
+	for _, want := range []string{
+		"rsync ",
+		"--mkpath",
+		"--chmod=F0600",
+		"-p 33000",
+		filepath.Join(home, ".config", "opencode", "opencode.json"),
+		"user@localhost:/home/user/.config/opencode/opencode.json",
+	} {
+		if !strings.Contains(rsync, want) {
+			t.Errorf("rsync command missing %q:\n%s", want, rsync)
+		}
+	}
+	if fr.calls[5].host != "" {
+		t.Errorf("rsync should run on the local host (host=\"\"), got %q", fr.calls[5].host)
+	}
+	if !strings.Contains(out.String(), "Pushing opencode config") {
+		t.Errorf("expected a status line about pushing opencode config:\n%s", out.String())
+	}
+}
+
+// TestCreate_OpencodeSkipsConfigWhenAbsent pins the best-effort contract:
+// the opencode config is optional, so a missing source file is silently
+// skipped — no port lookup, no rsync — rather than failing the create.
+func TestCreate_OpencodeSkipsConfigWhenAbsent(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir() // intentionally no ~/.config/opencode/opencode.json
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},
+		reply{},
+		reply{stdout: "abc123\n"},
+		reply{stdout: "demo\n"}, // ps — running check
+	)
+
+	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Opencode: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := len(fr.calls); got != 4 {
+		t.Errorf("missing opencode config must not trigger a port lookup or rsync; got %d calls", got)
+	}
+}
+
+// TestCreate_CodexLabelsContainerAndEmbedsInstaller pins that --codex
+// both stamps the `codex=true` metadata label on the container and embeds
+// the codex installer in the generated Dockerfile.
+func TestCreate_CodexLabelsContainerAndEmbedsInstaller(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir() // no ~/.codex/config.toml — push is skipped
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},
+		reply{},
+		reply{stdout: "abc123\n"},
+		reply{stdout: "demo\n"}, // ps — running check
+	)
+
+	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Codex: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := len(fr.calls); got != 4 {
+		t.Fatalf("--codex with no config file should not push; got %d calls: %+v", got, fr.calls)
+	}
+	if !strings.Contains(fr.calls[2].cmd, "--label codex=true") {
+		t.Errorf("run cmd should carry the codex=true label, got %q", fr.calls[2].cmd)
+	}
+	if !strings.Contains(fr.calls[1].stdin, "https://chatgpt.com/codex/install.sh") {
+		t.Errorf("--codex should embed the codex installer in the Dockerfile:\n%s",
+			fr.calls[1].stdin)
+	}
+}
+
+// TestCreate_CodexPushesConfigWhenPresent pins the post-run config copy:
+// when ~/.codex/config.toml exists on the operator's machine, Create
+// rsyncs it into /home/user/.codex/ inside the instance (the same
+// --mkpath/--chmod single-file push as the other agent configs).
+func TestCreate_CodexPushesConfigWhenPresent(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	mustWriteFile(t, filepath.Join(home, ".codex", "config.toml"), "model = \"x\"\n")
+
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},         // ps -a
+		reply{},                          // build
+		reply{stdout: "abc123\n"},        // run
+		reply{stdout: "demo\n"},          // ps — running check
+		reply{stdout: "0.0.0.0:33000\n"}, // port lookup
+		reply{},                          // rsync
+	)
+
+	var out bytes.Buffer
+	err := a.Create(context.Background(), &out, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Codex: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v\nout:\n%s", err, out.String())
+	}
+	if got := len(fr.calls); got != 6 {
+		t.Fatalf("expected 6 runner calls (ps -a, build, run, ps, port, rsync), got %d:\n%+v",
+			got, fr.calls)
+	}
+	rsync := fr.calls[5].cmd
+	for _, want := range []string{
+		"rsync ",
+		"--mkpath",
+		"--chmod=F0600",
+		"-p 33000",
+		filepath.Join(home, ".codex", "config.toml"),
+		"user@localhost:/home/user/.codex/config.toml",
+	} {
+		if !strings.Contains(rsync, want) {
+			t.Errorf("rsync command missing %q:\n%s", want, rsync)
+		}
+	}
+	if fr.calls[5].host != "" {
+		t.Errorf("rsync should run on the local host (host=\"\"), got %q", fr.calls[5].host)
+	}
+	if !strings.Contains(out.String(), "Pushing Codex config") {
+		t.Errorf("expected a status line about pushing Codex config:\n%s", out.String())
+	}
+}
+
+// TestCreate_CodexSkipsConfigWhenAbsent pins the best-effort contract:
+// the codex config is optional, so a missing source file is silently
+// skipped — no port lookup, no rsync — rather than failing the create.
+func TestCreate_CodexSkipsConfigWhenAbsent(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir() // intentionally no ~/.codex/config.toml
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},
+		reply{},
+		reply{stdout: "abc123\n"},
+		reply{stdout: "demo\n"}, // ps — running check
+	)
+
+	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Codex: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := len(fr.calls); got != 4 {
+		t.Errorf("missing codex config must not trigger a port lookup or rsync; got %d calls", got)
+	}
+}
+
+// TestCreate_CodexCredentialsPushesWhenPresent pins the opt-in
+// credentials copy: with --codex --codex-credentials and ~/.codex/auth.json
+// present (but no config.toml, to isolate the auth push), Create rsyncs
+// the auth file into /home/user/.codex/auth.json.
+func TestCreate_CodexCredentialsPushesWhenPresent(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	mustWriteFile(t, filepath.Join(home, ".codex", "auth.json"), `{"token":"x"}`)
+
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},         // ps -a
+		reply{},                          // build
+		reply{stdout: "abc123\n"},        // run
+		reply{stdout: "demo\n"},          // ps — running check
+		reply{stdout: "0.0.0.0:33000\n"}, // port lookup (credentials push)
+		reply{},                          // rsync
+	)
+
+	var out bytes.Buffer
+	err := a.Create(context.Background(), &out, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Codex: true, CodexCredentials: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v\nout:\n%s", err, out.String())
+	}
+	if got := len(fr.calls); got != 6 {
+		t.Fatalf("expected 6 runner calls (config skipped, creds pushed), got %d:\n%+v",
+			got, fr.calls)
+	}
+	rsync := fr.calls[5].cmd
+	for _, want := range []string{
+		"--mkpath",
+		"--chmod=F0600",
+		filepath.Join(home, ".codex", "auth.json"),
+		"user@localhost:/home/user/.codex/auth.json",
+	} {
+		if !strings.Contains(rsync, want) {
+			t.Errorf("rsync command missing %q:\n%s", want, rsync)
+		}
+	}
+	if !strings.Contains(out.String(), "Pushing Codex credentials") {
+		t.Errorf("expected a status line about pushing Codex credentials:\n%s", out.String())
+	}
+}
+
+// TestCreate_CodexCredentialsSkipWhenAbsent pins the best-effort
+// contract: --codex-credentials with no ~/.codex/auth.json on the host is
+// silently skipped — no port lookup, no rsync.
+func TestCreate_CodexCredentialsSkipWhenAbsent(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir() // no ~/.codex/auth.json (and no config.toml)
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},
+		reply{},
+		reply{stdout: "abc123\n"},
+		reply{stdout: "demo\n"}, // ps — running check
+	)
+
+	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Codex: true, CodexCredentials: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := len(fr.calls); got != 4 {
+		t.Errorf("missing codex auth must not trigger a port lookup or rsync; got %d calls", got)
+	}
+}
+
+// TestCreate_OpencodeCredentialsPushesWhenPresent pins the opt-in
+// credentials copy: with --opencode --opencode-credentials and
+// ~/.local/share/opencode/auth.json present (but no opencode.json, to
+// isolate the auth push), Create rsyncs the auth file into
+// /home/user/.local/share/opencode/auth.json.
+func TestCreate_OpencodeCredentialsPushesWhenPresent(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	mustWriteFile(t, filepath.Join(home, ".local", "share", "opencode", "auth.json"), `{"token":"x"}`)
+
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},         // ps -a
+		reply{},                          // build
+		reply{stdout: "abc123\n"},        // run
+		reply{stdout: "demo\n"},          // ps — running check
+		reply{stdout: "0.0.0.0:33000\n"}, // port lookup (credentials push)
+		reply{},                          // rsync
+	)
+
+	var out bytes.Buffer
+	err := a.Create(context.Background(), &out, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Opencode: true, OpencodeCredentials: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v\nout:\n%s", err, out.String())
+	}
+	if got := len(fr.calls); got != 6 {
+		t.Fatalf("expected 6 runner calls (config skipped, creds pushed), got %d:\n%+v",
+			got, fr.calls)
+	}
+	rsync := fr.calls[5].cmd
+	for _, want := range []string{
+		"--mkpath",
+		"--chmod=F0600",
+		filepath.Join(home, ".local", "share", "opencode", "auth.json"),
+		"user@localhost:/home/user/.local/share/opencode/auth.json",
+	} {
+		if !strings.Contains(rsync, want) {
+			t.Errorf("rsync command missing %q:\n%s", want, rsync)
+		}
+	}
+	if !strings.Contains(out.String(), "Pushing opencode credentials") {
+		t.Errorf("expected a status line about pushing opencode credentials:\n%s", out.String())
+	}
+}
+
+// TestCreate_OpencodeCredentialsSkipWhenAbsent pins the best-effort
+// contract: --opencode-credentials with no auth.json on the host is
+// silently skipped — no port lookup, no rsync.
+func TestCreate_OpencodeCredentialsSkipWhenAbsent(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir() // no ~/.local/share/opencode/auth.json (and no config)
+	a, fr := newAppWithHome(t, home, &stubKeys{key: "k"},
+		reply{stdout: "other\n"},
+		reply{},
+		reply{stdout: "abc123\n"},
+		reply{stdout: "demo\n"}, // ps — running check
+	)
+
+	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+		Opencode: true, OpencodeCredentials: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := len(fr.calls); got != 4 {
+		t.Errorf("missing opencode auth must not trigger a port lookup or rsync; got %d calls", got)
 	}
 }
 

@@ -40,6 +40,19 @@ type Options struct {
 
 	// Optional agents.
 	Claude bool
+	// Codex installs the OpenAI Codex CLI via its native installer. The
+	// installer drops the binary under $HOME/.local/bin (the same
+	// directory Claude and uv use), so it shares the single PATH export
+	// emitted for that directory. The operator's ~/.codex/config.toml is
+	// *not* baked into the image — it is pushed in afterwards by
+	// App.Create when present on the host.
+	Codex bool
+	// Opencode installs the opencode CLI via its native installer. The
+	// installer drops the binary under $HOME/.opencode/bin; the layer
+	// appends that directory to the login profile's PATH. The operator's
+	// opencode.json is *not* baked into the image — it is pushed in
+	// afterwards by App.Create when present on the host.
+	Opencode bool
 
 	// Optional tools.
 	Psql bool

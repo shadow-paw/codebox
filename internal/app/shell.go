@@ -76,11 +76,12 @@ func (a *App) Shell(
 }
 
 // shellAgents lists the agent metadata labels codebox stamps on a
-// container (one boolean label per installed agent), in the precedence
-// order `codebox shell` uses to pick the single agent for the tmux
-// right-hand pane. The label key doubles as the command to run, so the
-// value selected here is always one of these literals — never
-// attacker-influenced label content.
+// container (one boolean label per installed agent). `codebox shell` runs
+// the agent in the tmux right-hand pane only when exactly one of these is
+// installed; with several installed it can't pick for the operator, so it
+// leaves both panes as plain shells. The label key doubles as the command
+// to run, so the value selected here is always one of these literals —
+// never attacker-influenced label content.
 var shellAgents = []string{"claude", "codex", "opencode"}
 
 // shellMode reads the metadata labels codebox stamps on a container at
@@ -90,6 +91,10 @@ var shellAgents = []string{"claude", "codex", "opencode"}
 // `<engine> inspect` call, one value per line; an unset label is an
 // empty line. A lookup error is surfaced rather than silently falling
 // back to a bare shell.
+//
+// An agent is returned only when *exactly one* is installed: with none
+// there is nothing to run, and with several codebox cannot choose for the
+// operator, so in both cases agent is "" and tmux opens two plain panes.
 func shellMode(
 	ctx context.Context,
 	rnr CommandRunner,
@@ -109,11 +114,14 @@ func shellMode(
 		return ""
 	}
 	tmux = label(0) == "true"
+	var installed []string
 	for i, name := range shellAgents {
 		if label(i+1) == "true" {
-			agent = name
-			break
+			installed = append(installed, name)
 		}
+	}
+	if len(installed) == 1 {
+		agent = installed[0]
 	}
 	return tmux, agent, nil
 }

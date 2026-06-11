@@ -72,8 +72,27 @@ type CreateRequest struct {
 	Claude bool
 	// ClaudeCredentials, when true, rsyncs the operator's
 	// ~/.claude/credentials.json into the instance after the container
-	// starts. The file is never baked into the image.
+	// starts. Ignored unless Claude is also set. The file is never baked
+	// into the image.
 	ClaudeCredentials bool
+	// Codex installs the OpenAI Codex CLI. When set, App.Create also
+	// pushes the operator's ~/.codex/config.toml into the instance after
+	// it starts, if that file exists.
+	Codex bool
+	// CodexCredentials, when true, rsyncs the operator's ~/.codex/auth.json
+	// into the instance after the container starts, if that file exists.
+	// Ignored unless Codex is also set. The file is never baked into the
+	// image.
+	CodexCredentials bool
+	// Opencode installs the opencode CLI. When set, App.Create also
+	// pushes the operator's ~/.config/opencode/opencode.json into the
+	// instance after it starts, if that file exists.
+	Opencode bool
+	// OpencodeCredentials, when true, rsyncs the operator's
+	// ~/.local/share/opencode/auth.json into the instance after the
+	// container starts, if that file exists. Ignored unless Opencode is
+	// also set. The file is never baked into the image.
+	OpencodeCredentials bool
 
 	// Optional tools.
 	Psql bool
@@ -101,8 +120,9 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 
 	// Fail fast if --claude-credentials was requested but the source
 	// file is unreadable: we'd rather error before building a multi-GB
-	// image than after, and the check is local and cheap.
-	if req.ClaudeCredentials {
+	// image than after, and the check is local and cheap. The flag is
+	// ignored unless --claude is also set, so the stat is gated on both.
+	if req.Claude && req.ClaudeCredentials {
 		if _, err := os.Stat(claudeCredentialsPath(a.home)); err != nil {
 			return fmt.Errorf("--claude-credentials: %w", err)
 		}
@@ -122,6 +142,8 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 		Golang:        req.Golang,
 		Dotnet:        req.Dotnet,
 		Claude:        req.Claude,
+		Codex:         req.Codex,
+		Opencode:      req.Opencode,
 		Psql:          req.Psql,
 		Tmux:          req.Tmux,
 		Podman:        req.Podman,
@@ -158,8 +180,32 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 		}
 	}
 
-	if req.ClaudeCredentials {
+	// The *Credentials flags are ignored unless their agent is also
+	// installed, so each push is gated on both.
+	if req.Claude && req.ClaudeCredentials {
 		if err := a.pushClaudeCredentials(ctx, w, rnr, eng, req); err != nil {
+			return err
+		}
+	}
+
+	if req.Codex {
+		if err := a.pushCodexConfig(ctx, w, rnr, eng, req); err != nil {
+			return err
+		}
+	}
+	if req.Codex && req.CodexCredentials {
+		if err := a.pushCodexCredentials(ctx, w, rnr, eng, req); err != nil {
+			return err
+		}
+	}
+
+	if req.Opencode {
+		if err := a.pushOpencodeConfig(ctx, w, rnr, eng, req); err != nil {
+			return err
+		}
+	}
+	if req.Opencode && req.OpencodeCredentials {
+		if err := a.pushOpencodeCredentials(ctx, w, rnr, eng, req); err != nil {
 			return err
 		}
 	}
@@ -253,6 +299,115 @@ func (a *App) pushClaudeCredentials(
 	eng *container.Engine,
 	req CreateRequest,
 ) error {
+	dst := fmt.Sprintf("/home/%s/.claude/.credentials.json", instanceUser)
+	return a.pushFile(ctx, w, rnr, eng, req,
+		"Pushing Claude credentials", claudeCredentialsPath(a.home), dst)
+}
+
+// pushCodexConfig transfers the operator's ~/.codex/config.toml into the
+// freshly-started container so the Codex CLI inside the sandbox picks up
+// the operator's existing settings. Like the opencode config this is
+// best-effort: the file is optional, so a missing source is silently
+// skipped rather than failing the create. The file is never baked into
+// the image.
+func (a *App) pushCodexConfig(
+	ctx context.Context,
+	w io.Writer,
+	rnr CommandRunner,
+	eng *container.Engine,
+	req CreateRequest,
+) error {
+	src := codexConfigPath(a.home)
+	if _, err := os.Stat(src); err != nil {
+		return nil
+	}
+	dst := fmt.Sprintf("/home/%s/.codex/config.toml", instanceUser)
+	return a.pushFile(ctx, w, rnr, eng, req,
+		"Pushing Codex config", src, dst)
+}
+
+// pushCodexCredentials transfers the operator's ~/.codex/auth.json into
+// the freshly-started container so the Codex CLI inside the sandbox picks
+// up the operator's existing session. Like the Codex config this is
+// best-effort: a missing source file is silently skipped. Create only
+// calls this when Codex is also set. The file is never baked into the image.
+func (a *App) pushCodexCredentials(
+	ctx context.Context,
+	w io.Writer,
+	rnr CommandRunner,
+	eng *container.Engine,
+	req CreateRequest,
+) error {
+	src := codexAuthPath(a.home)
+	if _, err := os.Stat(src); err != nil {
+		return nil
+	}
+	dst := fmt.Sprintf("/home/%s/.codex/auth.json", instanceUser)
+	return a.pushFile(ctx, w, rnr, eng, req,
+		"Pushing Codex credentials", src, dst)
+}
+
+// pushOpencodeConfig transfers the operator's
+// ~/.config/opencode/opencode.json into the freshly-started container so
+// the opencode CLI inside the sandbox picks up the operator's existing
+// settings. Unlike Claude credentials this is best-effort: the config is
+// optional, so a missing source file is silently skipped rather than
+// failing the create. The file is never baked into the image.
+func (a *App) pushOpencodeConfig(
+	ctx context.Context,
+	w io.Writer,
+	rnr CommandRunner,
+	eng *container.Engine,
+	req CreateRequest,
+) error {
+	src := opencodeConfigPath(a.home)
+	if _, err := os.Stat(src); err != nil {
+		return nil
+	}
+	dst := fmt.Sprintf("/home/%s/.config/opencode/opencode.json", instanceUser)
+	return a.pushFile(ctx, w, rnr, eng, req,
+		"Pushing opencode config", src, dst)
+}
+
+// pushOpencodeCredentials transfers the operator's
+// ~/.local/share/opencode/auth.json into the freshly-started container so
+// the opencode CLI inside the sandbox picks up the operator's existing
+// session. Like the opencode config this is best-effort: a missing source
+// file is silently skipped. Create only calls this when Opencode is also
+// set. The file is never baked into the image.
+func (a *App) pushOpencodeCredentials(
+	ctx context.Context,
+	w io.Writer,
+	rnr CommandRunner,
+	eng *container.Engine,
+	req CreateRequest,
+) error {
+	src := opencodeAuthPath(a.home)
+	if _, err := os.Stat(src); err != nil {
+		return nil
+	}
+	dst := fmt.Sprintf("/home/%s/.local/share/opencode/auth.json", instanceUser)
+	return a.pushFile(ctx, w, rnr, eng, req,
+		"Pushing opencode credentials", src, dst)
+}
+
+// pushFile rsyncs a single local file (src) into the freshly-started
+// container at the absolute in-container path dst. It looks up the
+// host-side sshd port, builds the rsync with --mkpath + --chmod=F0600 so
+// dst's parent directory is created on demand and the file lands 0600,
+// echoes a labelled block, and runs the transfer locally so progress
+// streams to the operator. If the first attempt fails — most often
+// because the in-container sshd is still coming up — it waits
+// claudeCredentialsRetryDelay and retries exactly once. label is the
+// human-facing status line (e.g. "Pushing Claude credentials").
+func (a *App) pushFile(
+	ctx context.Context,
+	w io.Writer,
+	rnr CommandRunner,
+	eng *container.Engine,
+	req CreateRequest,
+	label, src, dst string,
+) error {
 	var portOut, portErr bytes.Buffer
 	if err := rnr.Run(ctx, eng.HostPort(req.Instance), nil, &portOut, &portErr); err != nil {
 		return wrapRunErr("look up host port", err, &portErr)
@@ -263,19 +418,17 @@ func (a *App) pushClaudeCredentials(
 			req.Instance, instancePort)
 	}
 
-	src := claudeCredentialsPath(a.home)
-	dst := fmt.Sprintf("%s@localhost:/home/%s/.claude/.credentials.json",
-		instanceUser, instanceUser)
+	fullDst := fmt.Sprintf("%s@localhost:%s", instanceUser, dst)
 	rsyncCmd := buildCredentialsRsyncCommand(req.Remote, hostPort,
-		expandHome(req.InstanceKey, a.home), src, dst)
-	_, _ = fmt.Fprintf(w, "Pushing Claude credentials...\n")
+		expandHome(req.InstanceKey, a.home), src, fullDst)
+	_, _ = fmt.Fprintf(w, "%s...\n", label)
 	writeRsyncBlock(w, rsyncCmd)
 
 	local := a.runners("")
 	if err := local.Run(ctx, rsyncCmd, nil, w, w); err != nil {
 		_, _ = fmt.Fprintf(w,
-			"Credentials push failed (%v); the in-container sshd may not be ready yet — retrying once...\n",
-			err)
+			"%s failed (%v); the in-container sshd may not be ready yet — retrying once...\n",
+			label, err)
 		select {
 		case <-time.After(claudeCredentialsRetryDelay):
 		case <-ctx.Done():
@@ -284,6 +437,31 @@ func (a *App) pushClaudeCredentials(
 		return local.Run(ctx, rsyncCmd, nil, w, w)
 	}
 	return nil
+}
+
+// opencodeConfigPath returns the operator-side path to the opencode
+// config file that --opencode pushes into the instance when present.
+func opencodeConfigPath(home string) string {
+	return filepath.Join(home, ".config", "opencode", "opencode.json")
+}
+
+// opencodeAuthPath returns the operator-side path to the opencode
+// credentials file that --opencode-credentials pushes into the instance
+// when present.
+func opencodeAuthPath(home string) string {
+	return filepath.Join(home, ".local", "share", "opencode", "auth.json")
+}
+
+// codexConfigPath returns the operator-side path to the Codex config
+// file that --codex pushes into the instance when present.
+func codexConfigPath(home string) string {
+	return filepath.Join(home, ".codex", "config.toml")
+}
+
+// codexAuthPath returns the operator-side path to the Codex credentials
+// file that --codex-credentials pushes into the instance when present.
+func codexAuthPath(home string) string {
+	return filepath.Join(home, ".codex", "auth.json")
 }
 
 // claudeCredentialsPath returns the operator-side path to the Claude
@@ -361,9 +539,10 @@ func deleteHint(req CreateRequest) string {
 // its right-hand pane; the label keys for agents match the command name
 // so the shell can run them directly.
 //
-// Only --claude is installable today (codex/opencode are rejected at the
-// CLI before they reach here), so only its label can appear now; the
-// others slot in unchanged once their installers ship.
+// The agent labels are emitted in the shellAgents precedence order
+// (claude, codex, opencode) so the label block reads consistently; the
+// order does not otherwise matter since `codebox shell` only acts when a
+// single agent is installed.
 func metadataLabels(req CreateRequest) []string {
 	var labels []string
 	if req.Tmux {
@@ -371,6 +550,12 @@ func metadataLabels(req CreateRequest) []string {
 	}
 	if req.Claude {
 		labels = append(labels, "claude=true")
+	}
+	if req.Codex {
+		labels = append(labels, "codex=true")
+	}
+	if req.Opencode {
+		labels = append(labels, "opencode=true")
 	}
 	return labels
 }

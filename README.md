@@ -76,6 +76,11 @@ codebox workflow origin/main:issue-1234         # create, git push, and shell in
 codebox git pull issue-1234                     # branch defaults to the instance name
 codebox delete issue-1234                       # stop and remove the sandbox
 ```
+Agent flags are on/off toggles, so a `.codebox.conf` default can be turned
+off for a single run from the command line:
+```sh
+codebox workflow origin/main:issue-1234 --claude=false   # skip the Claude install this time
+```
 > HINT: You can run multiple sandboxes at the same time.
 
 To reach services running inside a sandbox, declare the forwards in the

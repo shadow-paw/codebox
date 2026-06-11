@@ -30,11 +30,15 @@ type WorkflowRequest struct {
 	Golang     string
 	Dotnet     string
 
-	Claude            bool
-	ClaudeCredentials bool
-	Psql              bool
-	Tmux              bool
-	Podman            bool
+	Claude              bool
+	ClaudeCredentials   bool
+	Codex               bool
+	CodexCredentials    bool
+	Opencode            bool
+	OpencodeCredentials bool
+	Psql                bool
+	Tmux                bool
+	Podman              bool
 }
 
 // Workflow is a shortcut that chains create, git push, and shell.
@@ -61,22 +65,26 @@ func (a *App) Workflow(
 	}
 
 	if err := a.Create(ctx, stdout, CreateRequest{
-		Instance:          targetBranch,
-		Orchestrator:      req.Orchestrator,
-		OS:                req.OS,
-		InstanceKey:       req.InstanceKey,
-		Remote:            req.Remote,
-		Rebuild:           req.Rebuild,
-		HTTPSProxy:        req.HTTPSProxy,
-		Python:            req.Python,
-		Node:              req.Node,
-		Golang:            req.Golang,
-		Dotnet:            req.Dotnet,
-		Claude:            req.Claude,
-		ClaudeCredentials: req.ClaudeCredentials,
-		Psql:              req.Psql,
-		Tmux:              req.Tmux,
-		Podman:            req.Podman,
+		Instance:            targetBranch,
+		Orchestrator:        req.Orchestrator,
+		OS:                  req.OS,
+		InstanceKey:         req.InstanceKey,
+		Remote:              req.Remote,
+		Rebuild:             req.Rebuild,
+		HTTPSProxy:          req.HTTPSProxy,
+		Python:              req.Python,
+		Node:                req.Node,
+		Golang:              req.Golang,
+		Dotnet:              req.Dotnet,
+		Claude:              req.Claude,
+		ClaudeCredentials:   req.ClaudeCredentials,
+		Codex:               req.Codex,
+		CodexCredentials:    req.CodexCredentials,
+		Opencode:            req.Opencode,
+		OpencodeCredentials: req.OpencodeCredentials,
+		Psql:                req.Psql,
+		Tmux:                req.Tmux,
+		Podman:              req.Podman,
 	}); err != nil {
 		return err
 	}

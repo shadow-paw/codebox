@@ -131,9 +131,59 @@ func TestShell_AgentLabelNotTrueIgnored(t *testing.T) {
 	}
 }
 
-// TestShell_AgentPrecedence pins that when more than one agent label is
-// set, the first in shellAgents precedence (claude) wins.
-func TestShell_AgentPrecedence(t *testing.T) {
+// TestShell_OpencodeAgentRunsOnRight pins that a non-claude agent label
+// (here opencode), when it is the only agent installed, runs in the
+// right-hand tmux pane — the label key doubles as the command.
+func TestShell_OpencodeAgentRunsOnRight(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: "demo\n"},
+		reply{stdout: "true\n\n\ntrue\n"}, // tmux=true, only opencode set
+		reply{stdout: "0.0.0.0:33000\n"},
+		reply{},
+	)
+
+	err := a.Shell(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{},
+		app.ShellRequest{Instance: "demo", Orchestrator: "podman"})
+	if err != nil {
+		t.Fatalf("Shell: %v", err)
+	}
+	wantSSH := "ssh -t -o StrictHostKeyChecking=no -p 33000 user@localhost " +
+		`'cd ~/source 2>/dev/null; tmux attach -t main 2>/dev/null || exec tmux new-session -s main \; split-window -h "$SHELL -lc opencode"'`
+	if fr.calls[3].cmd != wantSSH {
+		t.Errorf("opencode should run on the right:\n got: %q\nwant: %q", fr.calls[3].cmd, wantSSH)
+	}
+}
+
+// TestShell_CodexAgentRunsOnRight pins that the codex agent label, when
+// it is the only agent installed, runs in the right-hand tmux pane.
+func TestShell_CodexAgentRunsOnRight(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: "demo\n"},
+		reply{stdout: "true\n\ntrue\n\n"}, // tmux=true, only codex set
+		reply{stdout: "0.0.0.0:33000\n"},
+		reply{},
+	)
+
+	err := a.Shell(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{},
+		app.ShellRequest{Instance: "demo", Orchestrator: "podman"})
+	if err != nil {
+		t.Fatalf("Shell: %v", err)
+	}
+	wantSSH := "ssh -t -o StrictHostKeyChecking=no -p 33000 user@localhost " +
+		`'cd ~/source 2>/dev/null; tmux attach -t main 2>/dev/null || exec tmux new-session -s main \; split-window -h "$SHELL -lc codex"'`
+	if fr.calls[3].cmd != wantSSH {
+		t.Errorf("codex should run on the right:\n got: %q\nwant: %q", fr.calls[3].cmd, wantSSH)
+	}
+}
+
+// TestShell_MultipleAgentsRunNeither pins that when more than one agent
+// label is set, codebox cannot choose for the operator, so it launches
+// tmux with two plain panes and runs no agent.
+func TestShell_MultipleAgentsRunNeither(t *testing.T) {
 	t.Parallel()
 	a, fr := newApp(t,
 		&stubKeys{key: "k"},
@@ -149,9 +199,9 @@ func TestShell_AgentPrecedence(t *testing.T) {
 		t.Fatalf("Shell: %v", err)
 	}
 	wantSSH := "ssh -t -o StrictHostKeyChecking=no -p 33000 user@localhost " +
-		`'cd ~/source 2>/dev/null; tmux attach -t main 2>/dev/null || exec tmux new-session -s main \; split-window -h "$SHELL -lc claude"'`
+		`'cd ~/source 2>/dev/null; tmux attach -t main 2>/dev/null || exec tmux new-session -s main \; split-window -h'`
 	if fr.calls[3].cmd != wantSSH {
-		t.Errorf("claude should win precedence:\n got: %q\nwant: %q", fr.calls[3].cmd, wantSSH)
+		t.Errorf("multiple agents should launch neither:\n got: %q\nwant: %q", fr.calls[3].cmd, wantSSH)
 	}
 }
 

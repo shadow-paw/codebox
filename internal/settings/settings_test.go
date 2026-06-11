@@ -106,6 +106,20 @@ func TestInjectArgs(t *testing.T) {
 			want:   []string{"create", "--claude", "--claude-credentials", "mybox"},
 		},
 		{
+			name:   "boolean agent disabled via config injects =false",
+			cli:    []string{"create", "mybox"},
+			global: configWith(nil, []string{"codex=false"}),
+			want:   []string{"create", "--codex=false", "mybox"},
+		},
+		{
+			name:   "cli --claude=false overrides config-enabled claude",
+			cli:    []string{"create", "--claude=false", "mybox"},
+			global: configWith(nil, []string{"claude"}),
+			// The config "claude" entry is dropped because --claude is
+			// explicit on the CLI; the operator's --claude=false wins.
+			want: []string{"create", "--claude=false", "mybox"},
+		},
+		{
 			name:   "cli create flag not duplicated",
 			cli:    []string{"create", "--python=3.12", "mybox"},
 			global: configWith(nil, []string{"python=3.14", "node=25"}),

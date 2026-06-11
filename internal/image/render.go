@@ -136,13 +136,13 @@ func renderExtras(b *strings.Builder, s spec, opts Options) {
 		renderDotnet(b, opts.Dotnet, profile)
 	}
 
-	needsUser := opts.Python != "" || opts.Node != "" || opts.Claude
+	needsUser := opts.Python != "" || opts.Node != "" || opts.Claude || opts.Codex || opts.Opencode
 	if needsUser {
 		b.WriteString("USER user\n\n")
 	}
-	// uv (Python) and the Claude installer both drop binaries under
-	// $HOME/.local/bin; emit the PATH export once if either is enabled.
-	if opts.Python != "" || opts.Claude {
+	// uv (Python) and the Claude/Codex installers all drop binaries under
+	// $HOME/.local/bin; emit the PATH export once if any of them is enabled.
+	if opts.Python != "" || opts.Claude || opts.Codex {
 		fmt.Fprintf(b, "RUN echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> %s\n\n", profile)
 	}
 	if opts.Python != "" {
@@ -150,6 +150,12 @@ func renderExtras(b *strings.Builder, s spec, opts Options) {
 	}
 	if opts.Claude {
 		renderClaude(b, strings.TrimSpace(opts.HTTPSProxy))
+	}
+	if opts.Codex {
+		renderCodex(b, strings.TrimSpace(opts.HTTPSProxy))
+	}
+	if opts.Opencode {
+		renderOpencode(b, profile, strings.TrimSpace(opts.HTTPSProxy))
 	}
 	if opts.Node != "" {
 		renderNode(b, opts.Node)
@@ -250,6 +256,60 @@ func renderClaude(b *strings.Builder, httpsProxy string) {
 	b.WriteString("  }\n")
 	b.WriteString("}\n")
 	b.WriteString("EOF\n\n")
+}
+
+// renderCodex installs the OpenAI Codex CLI via its native installer.
+// The installer drops the `codex` binary into $HOME/.local/bin (the same
+// directory Claude and uv use), so the shared PATH export emitted by
+// renderExtras already puts it on the login shell's PATH — no per-layer
+// export is needed.
+//
+// When httpsProxy is non-empty it is exported inline for the install RUN
+// so curl (and the release-asset download it performs) route through it,
+// mirroring renderClaude; the proxy is not emitted as a global ENV
+// directive.
+//
+// The operator's ~/.codex/config.toml is *not* baked into the image — it
+// is pushed in afterwards by App.Create when it exists on the host.
+func renderCodex(b *strings.Builder, httpsProxy string) {
+	b.WriteString("# Install OpenAI Codex CLI.\n")
+	if httpsProxy == "" {
+		b.WriteString("RUN curl -fsSL https://chatgpt.com/codex/install.sh | bash\n\n")
+	} else {
+		escaped := strings.ReplaceAll(httpsProxy, "'", `'\''`)
+		fmt.Fprintf(b,
+			"RUN export HTTPS_PROXY='%s' && curl -fsSL https://chatgpt.com/codex/install.sh | bash\n\n",
+			escaped,
+		)
+	}
+}
+
+// renderOpencode installs the opencode CLI via its native installer.
+// The installer drops the `opencode` binary into $HOME/.opencode/bin and
+// only edits interactive rc files (.bashrc/.zshrc), which login shells do
+// not source, so the layer appends an explicit PATH export to the
+// per-family login profile — the same one the other agent/toolchain
+// layers write to — so `$SHELL -lc opencode` (the tmux right-pane
+// command) finds the binary.
+//
+// When httpsProxy is non-empty it is exported inline for the install RUN
+// so curl (and any sub-downloads) route through it, mirroring
+// renderClaude; the proxy is not emitted as a global ENV directive.
+//
+// The operator's opencode.json is *not* baked into the image — it is
+// pushed in afterwards by App.Create when it exists on the host.
+func renderOpencode(b *strings.Builder, profile, httpsProxy string) {
+	b.WriteString("# Install opencode.\n")
+	if httpsProxy == "" {
+		b.WriteString("RUN curl -fsSL https://opencode.ai/install | bash\n")
+	} else {
+		escaped := strings.ReplaceAll(httpsProxy, "'", `'\''`)
+		fmt.Fprintf(b,
+			"RUN export HTTPS_PROXY='%s' && curl -fsSL https://opencode.ai/install | bash\n",
+			escaped,
+		)
+	}
+	fmt.Fprintf(b, "RUN echo 'export PATH=\"$HOME/.opencode/bin:$PATH\"' >> %s\n\n", profile)
 }
 
 // renderHTTPSProxy appends `export HTTPS_PROXY="<value>"` to the
