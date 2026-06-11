@@ -170,6 +170,7 @@ func runCreate(ctx context.Context, out io.Writer, opts createOpts) error {
 		Claude:            opts.claude,
 		ClaudeCredentials: opts.claudeCredentials,
 		Psql:              opts.psql,
+		Podman:            opts.podman,
 	})
 }
 
@@ -185,9 +186,6 @@ func rejectUnsupportedFlags(opts createOpts) error {
 	}
 	if opts.opencode {
 		names = append(names, "--opencode")
-	}
-	if opts.podman {
-		names = append(names, "--podman")
 	}
 	if len(names) == 0 {
 		return nil

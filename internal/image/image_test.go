@@ -125,6 +125,47 @@ func TestGenerate_PamSudoFixOnlyOnTargetedOS(t *testing.T) {
 	}
 }
 
+// TestGenerate_UserCreation pins the per-OS account flow: Ubuntu renames
+// its pre-existing "ubuntu" account to "user" (login, group, home),
+// while Debian and Red Hat create a fresh "user". Both paths unlock the
+// password slot with usermod -p '*NP'.
+func TestGenerate_UserCreation(t *testing.T) {
+	t.Parallel()
+	for _, osKey := range []string{"ubuntu_24", "ubuntu_26"} {
+		osKey := osKey
+		t.Run(osKey, func(t *testing.T) {
+			t.Parallel()
+			out := generate(t, osKey)
+			wants := []string{
+				"usermod -l user -d /home/user -m -s /bin/bash ubuntu",
+				"groupmod -n user ubuntu",
+				"usermod -p '*NP' user",
+			}
+			for _, w := range wants {
+				if !strings.Contains(out, w) {
+					t.Errorf("%s should rename the ubuntu account: missing %q\n%s", osKey, w, out)
+				}
+			}
+			if strings.Contains(out, "useradd") {
+				t.Errorf("%s should rename, not useradd\n%s", osKey, out)
+			}
+		})
+	}
+	for _, osKey := range []string{"debian_12", "debian_13", "redhat_10"} {
+		osKey := osKey
+		t.Run(osKey, func(t *testing.T) {
+			t.Parallel()
+			out := generate(t, osKey)
+			if !strings.Contains(out, "useradd -m -s /bin/bash user") {
+				t.Errorf("%s should useradd a fresh user\n%s", osKey, out)
+			}
+			if strings.Contains(out, "usermod -l user") {
+				t.Errorf("%s should not rename an account\n%s", osKey, out)
+			}
+		})
+	}
+}
+
 // TestGenerate_BuildOrder pins the section order to the spec — package
 // install must come before user creation, sshd, sudoers, init, key, and
 // EXPOSE — so cache invalidation behaves predictably.
@@ -474,6 +515,126 @@ func TestGenerate_PsqlInstall(t *testing.T) {
 				t.Fatalf("%s with --psql should install %q\n%s", osKey, want, out)
 			}
 		})
+	}
+}
+
+// TestGenerate_PodmanInstall pins the --podman layer: the engine and
+// the rootless networking/storage stack (passt for pasta networking)
+// are installed, the per-user containers.conf empties default_sysctls,
+// the per-user registries.conf adds docker.io, and /etc/subuid and
+// /etc/subgid get the reserved root/user ranges.
+func TestGenerate_PodmanInstall(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", Podman: true})
+	wants := []string{
+		"podman", "podman-compose", "passt", "uidmap",
+		"fuse-overlayfs", "nftables", "aardvark-dns",
+		"# Configure rootless Podman inside the instance.",
+		`printf 'root:1:65535\nuser:1:999\nuser:1001:64535\n' > /etc/subuid`,
+		`printf 'root:1:65535\nuser:1:999\nuser:1001:64535\n' > /etc/subgid`,
+		"COPY --chown=user:user <<EOF /home/user/.config/containers/containers.conf",
+		"[containers]",
+		"default_sysctls = []",
+		"COPY --chown=user:user <<EOF /home/user/.config/containers/registries.conf",
+		"[registries.search]",
+		"registries = ['docker.io']",
+	}
+	for _, want := range wants {
+		if !strings.Contains(out, want) {
+			t.Errorf("Podman layer missing %q\n%s", want, out)
+		}
+	}
+	// pasta is Podman's default rootless network command, so no
+	// containers.conf network key is written.
+	if strings.Contains(out, "default_rootless_network_cmd") {
+		t.Errorf("should not pin default_rootless_network_cmd (pasta is the default)\n%s", out)
+	}
+	if strings.Contains(out, "slirp4netns") {
+		t.Errorf("slirp4netns is no longer installed or configured\n%s", out)
+	}
+}
+
+// TestGenerate_PodmanSubIDStartUniform pins that the second subordinate
+// ID range starts at 1001 on every supported OS — the Ubuntu user
+// rename keeps "user" at UID 1000 the way it lands on Debian/Red Hat.
+func TestGenerate_PodmanSubIDStartUniform(t *testing.T) {
+	t.Parallel()
+	for _, osKey := range []string{"debian_12", "debian_13", "ubuntu_24", "ubuntu_26", "redhat_10"} {
+		osKey := osKey
+		t.Run(osKey, func(t *testing.T) {
+			t.Parallel()
+			out := generateOpts(t, image.Options{OS: osKey, Podman: true})
+			for _, f := range []string{"/etc/subuid", "/etc/subgid"} {
+				want := `printf 'root:1:65535\nuser:1:999\nuser:1001:64535\n' > ` + f
+				if !strings.Contains(out, want) {
+					t.Errorf("%s should write %q\n%s", osKey, want, out)
+				}
+			}
+		})
+	}
+}
+
+// TestGenerate_PodmanRemapsUidmapOnDnf pins the Red Hat package
+// remapping: there is no standalone uidmap package, the new[ug]idmap
+// helpers ship in shadow-utils.
+func TestGenerate_PodmanRemapsUidmapOnDnf(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "redhat_10", Podman: true})
+	if !strings.Contains(out, "shadow-utils") {
+		t.Fatalf("redhat_10 with --podman should install shadow-utils for uidmap\n%s", out)
+	}
+	if strings.Contains(out, " uidmap ") {
+		t.Errorf("redhat_10 should not reference the Debian uidmap package name\n%s", out)
+	}
+}
+
+// TestGenerate_PodmanInstallOnDnf pins the Red Hat install flow: the dnf
+// set omits podman-compose (which comes from PyPI via pip) and pulls
+// python3-pip so pip3 exists.
+func TestGenerate_PodmanInstallOnDnf(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "redhat_10", Podman: true})
+	wants := []string{
+		"python3-pip",
+		"pip3 install podman-compose",
+	}
+	for _, w := range wants {
+		if !strings.Contains(out, w) {
+			t.Errorf("redhat_10 podman install missing %q\n%s", w, out)
+		}
+	}
+	// podman-compose comes only from pip — it must not also appear in the
+	// dnf install list, so the sole mention is the pip3 invocation.
+	if got := strings.Count(out, "podman-compose"); got != 1 {
+		t.Errorf("podman-compose should be mentioned once (the pip install), got %d\n%s", got, out)
+	}
+}
+
+// TestGenerate_PodmanRunsBeforeClaude pins that the Podman setup is
+// emitted before the agent install so an agent can drive containers as
+// part of its first task.
+func TestGenerate_PodmanRunsBeforeClaude(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", Podman: true, Claude: true})
+	podmanIdx := strings.Index(out, "# Configure rootless Podman inside the instance.")
+	claudeIdx := strings.Index(out, "# Install Claude Code.")
+	if podmanIdx < 0 || claudeIdx < 0 || podmanIdx >= claudeIdx {
+		t.Fatalf("Podman setup must precede the Claude install:\n%s", out)
+	}
+}
+
+// TestGenerate_PodmanOmittedByDefault keeps the podman layer off the
+// no-flag baseline.
+func TestGenerate_PodmanOmittedByDefault(t *testing.T) {
+	t.Parallel()
+	out := generate(t, "debian_13")
+	for _, marker := range []string{
+		"containers.conf", "default_sysctls", "/etc/subuid",
+		"podman-compose", "passt", "registries.conf", "registries.search",
+	} {
+		if strings.Contains(out, marker) {
+			t.Errorf("default Dockerfile should not mention %q\n%s", marker, out)
+		}
 	}
 }
 

@@ -9,6 +9,13 @@ type spec struct {
 	family          family
 	needsPamSudoFix bool
 	hasSshdConfigD  bool
+	// renameFromUser, when non-empty, names a pre-existing account in the
+	// base image that is renamed to "user" (login, primary group, and
+	// home directory) instead of creating a fresh account. Ubuntu base
+	// images ship an "ubuntu" user at UID 1000; renaming it keeps "user"
+	// at UID 1000 the way it lands on Debian, so the rootless subordinate
+	// ID ranges are uniform across distros.
+	renameFromUser string
 }
 
 // family abstracts a distro's package manager and any per-distro
@@ -22,6 +29,7 @@ type family interface {
 	dotnetDeps() []string
 	psqlPkg() string
 	profilePath() string
+	podmanInstall() string
 }
 
 type aptFamily struct{}
@@ -56,6 +64,14 @@ func (aptFamily) psqlPkg() string { return "postgresql-client" }
 // bash login shells on Debian and Ubuntu.
 func (aptFamily) profilePath() string { return "/home/user/.profile" }
 
+// podmanInstall returns the RUN body that installs the rootless Podman
+// stack on apt-family distros. Every package — including podman-compose
+// and uidmap — is in the distro repos, so a single apt transaction does
+// it.
+func (f aptFamily) podmanInstall() string {
+	return f.extraInstallLine(podmanPackages)
+}
+
 func aptInstall(pkgs []string) string {
 	return "apt-get update && \\\n" +
 		"    apt-get install -y --no-install-recommends \\\n" +
@@ -83,6 +99,10 @@ func (dnfFamily) pkg(canonical string) string {
 		return "iputils"
 	case "dnsutils":
 		return "bind-utils"
+	case "uidmap":
+		// newuidmap/newgidmap ship in shadow-utils on Red Hat; there is
+		// no standalone uidmap package.
+		return "shadow-utils"
 	default:
 		return canonical
 	}
@@ -109,6 +129,23 @@ func (dnfFamily) psqlPkg() string { return "postgresql" }
 // read /home/user/.bash_profile, not .profile.
 func (dnfFamily) profilePath() string { return "/home/user/.bash_profile" }
 
+// podmanInstall returns the RUN body that installs the rootless Podman
+// stack on dnf-family distros. podman-compose is not packaged for dnf,
+// so it comes from PyPI via pip; python3-pip is added to the dnf set so
+// pip3 is available.
+func (f dnfFamily) podmanInstall() string {
+	var pkgs []string
+	for _, p := range podmanPackages {
+		if p == "podman-compose" {
+			continue // installed via pip below
+		}
+		pkgs = append(pkgs, f.pkg(p))
+	}
+	pkgs = append(pkgs, "python3-pip")
+	return f.extraInstallLine(pkgs) + " && \\\n" +
+		"    pip3 install podman-compose"
+}
+
 // basePackages is the canonical set installed into every sandbox image.
 // Anything OS-specific is handled by family.pkg; family.installLine adds
 // the distro's build toolchain (apt installs build-essential).
@@ -117,6 +154,18 @@ var basePackages = []string{
 	"nano", "vim", "sudo",
 	"openssl", "openssh-server", "rsync", "git",
 	"iputils-ping", "dnsutils", "curl",
+}
+
+// podmanPackages is the canonical set installed when --podman is set:
+// the engine, the compose wrapper, and the rootless networking/storage
+// stack (passt for userspace networking via pasta, uidmap for the
+// new[ug]idmap setuid helpers, fuse-overlayfs for the rootless storage
+// driver, nftables for firewalling, aardvark-dns for name resolution on
+// user-defined networks). Names are the Debian-flavour ones; family.pkg
+// remaps the entries that differ on Red Hat.
+var podmanPackages = []string{
+	"podman", "podman-compose",
+	"passt", "uidmap", "fuse-overlayfs", "nftables", "aardvark-dns",
 }
 
 var (
@@ -128,8 +177,14 @@ var (
 var specs = map[string]spec{
 	"debian_12": {baseImage: "docker.io/debian:12.13", family: apt, hasSshdConfigD: true},
 	"debian_13": {baseImage: "docker.io/debian:13.4", family: apt, needsPamSudoFix: true, hasSshdConfigD: true},
-	"ubuntu_24": {baseImage: "docker.io/ubuntu:24.04", family: apt, hasSshdConfigD: true},
-	"ubuntu_26": {baseImage: "docker.io/ubuntu:26.04", family: apt, needsPamSudoFix: true, hasSshdConfigD: true},
+	"ubuntu_24": {
+		baseImage: "docker.io/ubuntu:24.04", family: apt,
+		hasSshdConfigD: true, renameFromUser: "ubuntu",
+	},
+	"ubuntu_26": {
+		baseImage: "docker.io/ubuntu:26.04", family: apt,
+		needsPamSudoFix: true, hasSshdConfigD: true, renameFromUser: "ubuntu",
+	},
 	"redhat_10": {baseImage: "docker.io/redhat/ubi10:10.1", family: dnf, needsPamSudoFix: true, hasSshdConfigD: true},
 }
 

@@ -103,17 +103,55 @@ func (e *Engine) Build(instance string, noCache bool) string {
 	)
 }
 
+// podmanRunFlags are added to the run command when the instance hosts
+// its own rootless Podman (--podman). Rather than --privileged, the
+// nested engine is granted only the pieces it needs: /dev/fuse for the
+// fuse-overlayfs storage driver, /dev/net/tun for pasta networking, the
+// sys_admin/net_admin/mknod capabilities for mounting and device nodes,
+// and SELinux/seccomp relaxations so the inner containers are not
+// blocked by the host's confinement.
+const podmanRunFlags = "--device /dev/fuse --device /dev/net/tun " +
+	"--cap-add=sys_admin --cap-add=net_admin --cap-add=mknod " +
+	"--security-opt label=disable --security-opt unmask=ALL"
+
 // Run is the shell command that creates and starts a detached
 // container labelled `codebox=true`, exposing every Dockerfile port
 // on a host-assigned random port. The container's hostname is set to
 // the instance name so an interactive shell shows the operator which
 // sandbox they are in.
-func (e *Engine) Run(instance string) string {
+//
+// podman adds the device/capability/security-opt flags
+// (podmanRunFlags) the instance needs to run rootless Podman of its
+// own (--podman); nested containers need them for fuse storage, pasta
+// networking, and to escape the host's SELinux/seccomp confinement.
+func (e *Engine) Run(instance string, podman bool) string {
 	q := shquote(instance)
+	podmanFlags := ""
+	if podman {
+		podmanFlags = " " + podmanRunFlags
+	}
 	return fmt.Sprintf(
-		`%s run -d --name %s --hostname %s --label codebox=true --publish-all %s`,
-		e.bin, q, q, q,
+		`%s run -d --name %s --hostname %s --label codebox=true%s --publish-all %s`,
+		e.bin, q, q, podmanFlags, q,
 	)
+}
+
+// Exec returns the shell command that runs argv inside the running
+// container as user "user", with HOME pointed at the user's home so
+// tools that read per-user state (rootless Podman's storage and config
+// under ~/.local and ~/.config) resolve it correctly. The container
+// name is shell-quoted; argv tokens are passed through verbatim and
+// must already be safe literals.
+func (e *Engine) Exec(instance string, argv ...string) string {
+	parts := make([]string, 0, 7+len(argv))
+	parts = append(parts,
+		e.bin, "exec",
+		"--user", "user",
+		"--env", "HOME=/home/user",
+		shquote(instance),
+	)
+	parts = append(parts, argv...)
+	return strings.Join(parts, " ")
 }
 
 // shquote single-quotes s for safe embedding into a shell command.

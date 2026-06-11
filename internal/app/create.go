@@ -77,6 +77,9 @@ type CreateRequest struct {
 
 	// Optional tools.
 	Psql bool
+	// Podman installs rootless Podman inside the instance and starts the
+	// container with --privileged so nested containers can run.
+	Podman bool
 }
 
 // Create provisions a sandbox instance: it confirms the instance does
@@ -117,6 +120,7 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 		Dotnet:        req.Dotnet,
 		Claude:        req.Claude,
 		Psql:          req.Psql,
+		Podman:        req.Podman,
 	}); err != nil {
 		return err
 	}
@@ -135,12 +139,18 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 
 	_, _ = fmt.Fprintf(w, "Starting container %q...\n", req.Instance)
 	var runOut, runErr bytes.Buffer
-	if err := rnr.Run(ctx, eng.Run(req.Instance), nil, &runOut, &runErr); err != nil {
+	if err := rnr.Run(ctx, eng.Run(req.Instance, req.Podman), nil, &runOut, &runErr); err != nil {
 		return wrapRunErr("start container", err, &runErr)
 	}
 
 	if err := ensureStarted(ctx, w, rnr, eng, req.Instance); err != nil {
 		return err
+	}
+
+	if req.Podman {
+		if err := migratePodman(ctx, w, rnr, eng, req.Instance); err != nil {
+			return err
+		}
 	}
 
 	if req.ClaudeCredentials {
@@ -198,6 +208,29 @@ func ensureStarted(
 	}
 	return fmt.Errorf("instance %q did not start after %d attempts: %w",
 		instance, attempts, lastErr)
+}
+
+// migratePodman runs `podman system migrate` as user "user" inside the
+// freshly-started container. The migrate step rebuilds the rootless
+// user-namespace mappings from the /etc/subuid and /etc/subgid ranges
+// the image baked in; without it the first `podman` invocation inside
+// the sandbox fails with a UID/GID range mismatch. It runs once, at
+// create time, via the engine's own `exec` so it does not depend on
+// the in-container sshd being up yet.
+func migratePodman(
+	ctx context.Context,
+	w io.Writer,
+	rnr CommandRunner,
+	eng *container.Engine,
+	instance string,
+) error {
+	_, _ = fmt.Fprintf(w, "Migrating Podman storage in %q...\n", instance)
+	var out, errBuf bytes.Buffer
+	cmd := eng.Exec(instance, "podman", "system", "migrate")
+	if err := rnr.Run(ctx, cmd, nil, &out, &errBuf); err != nil {
+		return wrapRunErr("podman system migrate", err, &errBuf)
+	}
+	return nil
 }
 
 // pushClaudeCredentials transfers the operator's

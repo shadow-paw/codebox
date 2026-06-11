@@ -33,6 +33,7 @@ type WorkflowRequest struct {
 	Claude            bool
 	ClaudeCredentials bool
 	Psql              bool
+	Podman            bool
 }
 
 // Workflow is a shortcut that chains create, git push, and shell.
@@ -73,6 +74,7 @@ func (a *App) Workflow(
 		Claude:            req.Claude,
 		ClaudeCredentials: req.ClaudeCredentials,
 		Psql:              req.Psql,
+		Podman:            req.Podman,
 	}); err != nil {
 		return err
 	}

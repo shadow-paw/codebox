@@ -222,6 +222,67 @@ func TestCreate_RebuildPassesNoCache(t *testing.T) {
 	}
 }
 
+// TestCreate_PodmanStartsWithDeviceFlagsAndMigrates pins that --podman
+// starts the container with the device/capability/security-opt flags
+// the nested rootless Podman needs, then runs `podman system migrate`
+// inside the instance once it is up.
+func TestCreate_PodmanStartsWithDeviceFlagsAndMigrates(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: ""}, reply{}, reply{},
+		reply{stdout: "demo\n"}, // ps — running check
+		reply{},                 // exec podman system migrate
+	)
+
+	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13", Podman: true,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	for _, want := range []string{
+		"--device /dev/fuse", "--device /dev/net/tun",
+		"--cap-add=sys_admin", "--cap-add=net_admin", "--cap-add=mknod",
+		"--security-opt label=disable", "--security-opt unmask=ALL",
+	} {
+		if !strings.Contains(fr.calls[2].cmd, want) {
+			t.Errorf("--podman run cmd missing %q; got: %q", want, fr.calls[2].cmd)
+		}
+	}
+	if got := len(fr.calls); got != 5 {
+		t.Fatalf("expected 5 runner calls with --podman, got %d: %+v", got, fr.calls)
+	}
+	if !strings.Contains(fr.calls[4].cmd, "exec --user user") ||
+		!strings.Contains(fr.calls[4].cmd, "podman system migrate") {
+		t.Errorf("call[4] should run `podman system migrate` inside the instance, got %q", fr.calls[4].cmd)
+	}
+}
+
+// TestCreate_NoPodmanSkipsDeviceFlagsAndMigrate keeps the device flags
+// off the run command and skips the migrate step when --podman is unset.
+func TestCreate_NoPodmanSkipsDeviceFlagsAndMigrate(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: ""}, reply{}, reply{},
+		reply{stdout: "demo\n"}, // ps — running check
+	)
+
+	err := a.Create(context.Background(), &bytes.Buffer{}, app.CreateRequest{
+		Instance: "demo", Orchestrator: "podman", OS: "debian_13",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if strings.Contains(fr.calls[2].cmd, "--device") || strings.Contains(fr.calls[2].cmd, "--cap-add") {
+		t.Errorf("run without --podman must not add device/cap flags; run cmd: %q", fr.calls[2].cmd)
+	}
+	if got := len(fr.calls); got != 4 {
+		t.Fatalf("expected 4 runner calls without --podman, got %d: %+v", got, fr.calls)
+	}
+}
+
 func TestCreate_AlreadyExistsSurfacesDeleteHint(t *testing.T) {
 	t.Parallel()
 	a, _ := newApp(t,

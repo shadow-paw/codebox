@@ -684,12 +684,12 @@ func TestCreate_AutoDetectAmbiguous(t *testing.T) {
 }
 
 // TestCreate_RejectsUnsupportedAgentFlags pins the contract that the
-// agent/podman flags fail fast until their installers ship. The flag
-// surface is preserved (they still parse) but invoking them errors
-// out. `--claude` has shipped — it is exercised by its own tests —
-// so it is not in this list.
+// agent flags fail fast until their installers ship. The flag surface
+// is preserved (they still parse) but invoking them errors out.
+// `--claude` and `--podman` have shipped — they are exercised by their
+// own tests — so they are not in this list.
 func TestCreate_RejectsUnsupportedAgentFlags(t *testing.T) {
-	for _, flag := range []string{"--codex", "--opencode", "--podman"} {
+	for _, flag := range []string{"--codex", "--opencode"} {
 		flag := flag
 		t.Run(flag, func(t *testing.T) {
 			home := withFakeHome(t)

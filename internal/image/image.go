@@ -43,6 +43,11 @@ type Options struct {
 
 	// Optional tools.
 	Psql bool
+	// Podman installs rootless Podman (plus podman-compose and the
+	// rootless networking/storage stack) and configures /etc/subuid,
+	// /etc/subgid, and containers.conf so the in-container user can run
+	// containers. The layer is emitted before any agent install.
+	Podman bool
 }
 
 // SupportedOS returns the OS keys understood by Generate in

@@ -155,6 +155,7 @@ func runWorkflow(
 		Claude:            opts.claude,
 		ClaudeCredentials: opts.claudeCredentials,
 		Psql:              opts.psql,
+		Podman:            opts.podman,
 	})
 }
 
@@ -165,6 +166,5 @@ func rejectUnsupportedWorkflowFlags(opts workflowOpts) error {
 	return rejectUnsupportedFlags(createOpts{
 		codex:    opts.codex,
 		opencode: opts.opencode,
-		podman:   opts.podman,
 	})
 }

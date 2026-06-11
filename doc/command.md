@@ -71,7 +71,7 @@ Flags (in help order):
 | `--claude-credentials`  | bool   | `false`        | After the container starts, rsync `~/.claude/.credentials.json` from the operator's machine into `/home/user/.claude/.credentials.json` inside the instance. Requires `--claude` and fails fast if it is not set. Credentials are **never** baked into the image. |
 | `--codex`               | bool   | `false`        | Install OpenAI Codex CLI. |
 | `--opencode`            | bool   | `false`        | Install opencode. |
-| `--podman`              | bool   | `false`        | Install rootless Podman inside the instance. |
+| `--podman`              | bool   | `false`        | Install rootless Podman (plus `podman-compose` and the rootless networking/storage stack, including `passt` for pasta networking) inside the instance, configure `/etc/subuid`, `/etc/subgid`, and the per-user `containers.conf` / `registries.conf`, start the container with the device/capability/security-opt flags nested containers need, and run `podman system migrate` once the container is up. |
 | `--psql`                | bool   | `false`        | Install the psql PostgreSQL client. |
 
 The `--help` output for `create` ends with six footer sections that
@@ -440,10 +440,23 @@ For each invocation the use-case layer performs, in order:
 3. **Container start.** `<engine> run -d --name INSTANCE --hostname
    INSTANCE --label codebox=true --publish-all INSTANCE`. The hostname
    is set so an interactive shell inside the container makes the
-   sandbox immediately identifiable. Failures surface the engine's
-   stderr verbatim.
+   sandbox immediately identifiable. When `--podman` is set, the flags
+   `--device /dev/fuse --device /dev/net/tun --cap-add=sys_admin
+   --cap-add=net_admin --cap-add=mknod --security-opt label=disable
+   --security-opt unmask=ALL` are added before `--publish-all` so the
+   in-container rootless Podman has the devices, capabilities, and
+   confinement relaxations it needs to run nested containers. Failures
+   surface the engine's stderr verbatim.
 
-4. **Success line.** A copy-paste-ready `codebox shell` command is
+4. **Podman migrate (only with `--podman`).** Once the container is
+   confirmed running, `<engine> exec --user user --env HOME=/home/user
+   INSTANCE podman system migrate` runs inside the instance to rebuild
+   the rootless user-namespace mappings from the baked-in `/etc/subuid`
+   and `/etc/subgid` ranges. Without it the first in-sandbox `podman`
+   invocation fails with a UID/GID range mismatch. It runs via the
+   engine's own `exec` so it does not wait on the in-container sshd.
+
+5. **Success line.** A copy-paste-ready `codebox shell` command is
    printed on the line after a one-line success message, indented by
    two spaces. `--orchestrator`, `--remote`, and `--instance-key` are
    included only when the operator supplied a non-default value:
@@ -489,9 +502,12 @@ later layer does not invalidate the package install cache:
 2. OS-specific fixes (`debian_13`, `ubuntu_26`, `redhat_10` only):
    overwrite `/etc/pam.d/sudo` with the minimal container-friendly
    stack.
-3. Create user `user` with a locked password slot (`useradd`), then
-   mark the account unlocked with `usermod -p '*NP' user` so pubkey
-   login succeeds.
+3. Provision the `user` account, then mark it unlocked with `usermod -p
+   '*NP' user` so pubkey login succeeds. On Debian and Red Hat a fresh
+   account is created with `useradd`; on Ubuntu the base image's existing
+   `ubuntu` account (UID 1000) is instead renamed to `user` — login,
+   primary group, and home directory — so `user` lands at UID 1000 on
+   every distro.
 4. Configure sshd: create `/run/sshd`, relax `pam_loginuid` to
    `optional`, and drop a `10-codebox.conf` into `/etc/ssh/sshd_config.d`
    with `Port 2222`, `PubkeyAuthentication yes`,
@@ -501,10 +517,9 @@ later layer does not invalidate the package install cache:
 6. Init script `/usr/local/bin/codebox-init` that execs `sshd` and
    `sleep infinity`.
 7. Optional language/tool layers (see [Optional toolchains](#optional-toolchains)).
-   Skipped entirely when no flag is set. `--codex`, `--opencode`, and
-   `--podman` are flag-bound for forward compatibility but currently
-   fail the command with `<flag> not yet supported` before any
-   orchestrator call.
+   Skipped entirely when no flag is set. `--codex` and `--opencode` are
+   flag-bound for forward compatibility but currently fail the command
+   with `<flag> not yet supported` before any orchestrator call.
 8. Install the operator's public key into
    `/home/user/.ssh/authorized_keys` (mode 0600, owned by `user`).
 9. `EXPOSE 2222`, `CMD ["/usr/local/bin/codebox-init"]`.
@@ -535,6 +550,7 @@ distros (Red Hat). Below, **PROFILE** refers to whichever file applies.
 | `--python=VER` | Runs `https://astral.sh/uv/install.sh` as user `user`, then runs `uv python install VER && uv python pin --global VER` to download the prebuilt CPython and set it as the global default for `uv`. (The `export PATH="$HOME/.local/bin:$PATH"` line is emitted once — see `--claude`.) |
 | `--node=VER` | On dnf-family distros, first installs `libatomic` (UBI omits it and recent V8 binaries link against it). Then installs nvm (pinned to `v0.40.1`) as user `user`, and runs `nvm install VER && nvm alias default VER`. |
 | `--claude` | Runs Anthropic's native installer (`curl -fsSL https://claude.ai/install.sh \| bash`) as user `user`. The installer drops the `claude` binary into `$HOME/.local/bin`; the corresponding PATH export is emitted once when `--claude` or `--python` is set. When `--https-proxy` is also set, the proxy is exported inline for this RUN (`export HTTPS_PROXY='URL' && curl ...`) so the install pipeline routes through it. The same layer also drops `/home/user/.claude.json` (owned by `user`) with `{"hasCompletedOnboarding": true, "defaultMode": "bypassPermissions"}` so the CLI skips the first-run prompt inside the sandbox. Credentials are not baked in — pass `--claude-credentials` to push them after the container starts. |
+| `--podman` | Installs `podman`, `podman-compose`, and the rootless stack (`passt`, `uidmap` — `shadow-utils` on dnf-family — `fuse-overlayfs`, `nftables`, `aardvark-dns`) as root. On Red Hat `podman-compose` is installed from PyPI via `pip3` (it is not packaged for dnf). The rootless network backend is pasta (from `passt`), which is Podman's default, so no `containers.conf` network key is written. It replaces `/etc/subuid` / `/etc/subgid` with `root:1:65535`, `user:1:999`, `user:1001:64535` (uniform across distros — `user` is UID 1000 everywhere, since Ubuntu's `ubuntu` account is renamed rather than adding a new user), and drops two files under `/home/user/.config/containers/` (owned by `user`): `containers.conf` with `[containers]` `default_sysctls = []`, and `registries.conf` with `[registries.search]` `registries = ['docker.io']` so unqualified `podman pull` names resolve against Docker Hub. The layer is emitted **before** any agent install so an agent can drive containers on its first task. The container is started with `--device /dev/fuse --device /dev/net/tun --cap-add=sys_admin --cap-add=net_admin --cap-add=mknod --security-opt label=disable --security-opt unmask=ALL` and, once running, `podman system migrate` is run inside it (see [the create steps](#codebox-create-instance)) so the nested rootless Podman has what it needs. |
 
 ### HTTPS proxy
 

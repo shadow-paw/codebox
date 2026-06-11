@@ -34,9 +34,18 @@ func render(s spec, authKey string, opts Options) string {
 		b.WriteString("EOF\n\n")
 	}
 
-	b.WriteString("# Create user \"user\" with a locked password slot, then unlock the account.\n")
-	b.WriteString("RUN useradd -m -s /bin/bash user && \\\n")
-	b.WriteString("    usermod -p '*NP' user\n\n")
+	if s.renameFromUser != "" {
+		fmt.Fprintf(&b,
+			"# Rename the base image's %q account to \"user\" (login, group, home), "+
+				"then unlock it.\n", s.renameFromUser)
+		fmt.Fprintf(&b, "RUN usermod -l user -d /home/user -m -s /bin/bash %s && \\\n", s.renameFromUser)
+		fmt.Fprintf(&b, "    groupmod -n user %s && \\\n", s.renameFromUser)
+		b.WriteString("    usermod -p '*NP' user\n\n")
+	} else {
+		b.WriteString("# Create user \"user\" with a locked password slot, then unlock the account.\n")
+		b.WriteString("RUN useradd -m -s /bin/bash user && \\\n")
+		b.WriteString("    usermod -p '*NP' user\n\n")
+	}
 
 	b.WriteString("# Configure sshd: prepare runtime dir, generate host keys, " +
 		"make pam_loginuid optional.\n")
@@ -100,6 +109,17 @@ func renderExtras(b *strings.Builder, s spec, opts Options) {
 	if len(rootPkgs) > 0 {
 		b.WriteString("# System packages for the requested toolchains.\n")
 		fmt.Fprintf(b, "RUN %s\n\n", s.family.extraInstallLine(rootPkgs))
+	}
+
+	// Podman install + setup runs before the agent installs below so an
+	// agent can drive containers as part of its first task. The install
+	// line is family-specific (RHEL needs a module enabled and gets
+	// podman-compose from PyPI), so it is rendered apart from the generic
+	// toolchain packages above.
+	if opts.Podman {
+		b.WriteString("# Install rootless Podman and its supporting stack.\n")
+		fmt.Fprintf(b, "RUN %s\n\n", s.family.podmanInstall())
+		renderPodman(b)
 	}
 
 	profile := s.family.profilePath()
@@ -240,6 +260,48 @@ func renderHTTPSProxy(b *strings.Builder, value, profile string) {
 	escaped := strings.ReplaceAll(value, "'", `'\''`)
 	b.WriteString("# HTTPS proxy for interactive shells inside the instance.\n")
 	fmt.Fprintf(b, "RUN echo 'export HTTPS_PROXY=\"%s\"' >> %s\n\n", escaped, profile)
+}
+
+// renderPodman configures rootless Podman for the in-container user.
+// The packages themselves are installed alongside the other root-scoped
+// system packages above; this block writes the pieces of configuration
+// the rootless stack needs:
+//
+//   - /etc/subuid and /etc/subgid hand the user the subordinate UID/GID
+//     ranges Podman maps into the user namespace. The base image seeds a
+//     single range for "user"; we replace both files with the explicit
+//     ranges codebox reserves for root and user. The second range starts
+//     at 1001 (just past user "user"'s own UID 1000) on every supported
+//     distro — Ubuntu's "ubuntu" account is renamed rather than adding a
+//     new user, so "user" lands at 1000 there too.
+//   - /home/user/.config/containers/containers.conf empties
+//     [containers] default_sysctls so the nested Podman does not try to
+//     set sysctls the host has masked, which would otherwise fail
+//     container start inside the sandbox.
+//   - /home/user/.config/containers/registries.conf adds docker.io to
+//     the unqualified-search list so `podman pull alpine` resolves the
+//     way operators expect rather than erroring on an ambiguous name.
+//
+// The rootless network backend is pasta: the passt package is installed
+// and pasta is Podman's default rootless networking command, so no
+// containers.conf network key is needed.
+//
+// The COPY directives create their parent directories if the engine
+// package has not already laid them down, so the block is
+// order-independent of the install RUN above.
+func renderPodman(b *strings.Builder) {
+	b.WriteString("# Configure rootless Podman inside the instance.\n")
+	ranges := "root:1:65535\\nuser:1:999\\nuser:1001:64535\\n"
+	b.WriteString("RUN printf '" + ranges + "' > /etc/subuid && \\\n")
+	b.WriteString("    printf '" + ranges + "' > /etc/subgid\n")
+	b.WriteString("COPY --chown=user:user <<EOF /home/user/.config/containers/containers.conf\n")
+	b.WriteString("[containers]\n")
+	b.WriteString("default_sysctls = []\n")
+	b.WriteString("EOF\n")
+	b.WriteString("COPY --chown=user:user <<EOF /home/user/.config/containers/registries.conf\n")
+	b.WriteString("[registries.search]\n")
+	b.WriteString("registries = ['docker.io']\n")
+	b.WriteString("EOF\n\n")
 }
 
 // renderNode installs nvm and the requested Node major version. The

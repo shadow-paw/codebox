@@ -75,17 +75,50 @@ func TestBuild_NoCacheFlagOnRebuild(t *testing.T) {
 func TestRun_LabelsAndPublishAll(t *testing.T) {
 	t.Parallel()
 	e, _ := container.New("podman")
-	got := e.Run("demo")
+	got := e.Run("demo", false)
 	want := `podman run -d --name 'demo' --hostname 'demo' --label codebox=true --publish-all 'demo'`
 	if got != want {
 		t.Fatalf("Run = %q\nwant %q", got, want)
 	}
 }
 
+// TestRun_PodmanAddsDeviceAndCapFlags pins that podman=true inserts the
+// device/capability/security-opt flags the nested rootless Podman needs
+// (in place of --privileged) and podman=false leaves them off.
+func TestRun_PodmanAddsDeviceAndCapFlags(t *testing.T) {
+	t.Parallel()
+	e, _ := container.New("podman")
+	got := e.Run("demo", true)
+	want := `podman run -d --name 'demo' --hostname 'demo' --label codebox=true ` +
+		`--device /dev/fuse --device /dev/net/tun ` +
+		`--cap-add=sys_admin --cap-add=net_admin --cap-add=mknod ` +
+		`--security-opt label=disable --security-opt unmask=ALL --publish-all 'demo'`
+	if got != want {
+		t.Fatalf("Run podman = %q\nwant %q", got, want)
+	}
+	if strings.Contains(e.Run("demo", false), "--device") ||
+		strings.Contains(e.Run("demo", false), "--cap-add") {
+		t.Errorf("Run without podman must not contain device/cap flags")
+	}
+}
+
+// TestExec_RunsAsUserWithHome pins the engine exec command shape used to
+// run one-off setup (e.g. `podman system migrate`) as user "user" with
+// HOME set so per-user rootless state resolves.
+func TestExec_RunsAsUserWithHome(t *testing.T) {
+	t.Parallel()
+	e, _ := container.New("podman")
+	got := e.Exec("demo", "podman", "system", "migrate")
+	want := `podman exec --user user --env HOME=/home/user 'demo' podman system migrate`
+	if got != want {
+		t.Fatalf("Exec = %q\nwant %q", got, want)
+	}
+}
+
 func TestRun_QuotesInstanceName(t *testing.T) {
 	t.Parallel()
 	e, _ := container.New("podman")
-	got := e.Run("nasty'name")
+	got := e.Run("nasty'name", false)
 	// Single quote must be properly escaped, not break out of the string.
 	if !strings.Contains(got, `'nasty'\''name'`) {
 		t.Errorf("Run should shell-quote the instance name:\n  got: %s", got)
