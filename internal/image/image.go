@@ -43,6 +43,10 @@ type Options struct {
 
 	// Optional tools.
 	Psql bool
+	// Tmux installs the tmux terminal multiplexer. `codebox shell`
+	// launches tmux automatically when the instance carries the
+	// matching `tmux=true` container label.
+	Tmux bool
 	// Podman installs rootless Podman (plus podman-compose and the
 	// rootless networking/storage stack) and configures /etc/subuid,
 	// /etc/subgid, and containers.conf so the in-container user can run

@@ -54,6 +54,11 @@ func (a *App) Shell(
 		return err
 	}
 
+	tmux, agent, err := shellMode(ctx, rnr, eng, req.Instance)
+	if err != nil {
+		return err
+	}
+
 	var portOut, portErr bytes.Buffer
 	if err := rnr.Run(ctx, eng.HostPort(req.Instance), nil, &portOut, &portErr); err != nil {
 		return wrapRunErr("look up host port", err, &portErr)
@@ -65,9 +70,52 @@ func (a *App) Shell(
 	}
 
 	sshCmd := buildShellSSHCommand(req.Remote, hostPort,
-		expandHome(req.InstanceKey, a.home), req.Ports)
+		expandHome(req.InstanceKey, a.home), req.Ports, tmux, agent)
 
 	return a.runners("").Run(ctx, sshCmd, stdin, stdout, stderr)
+}
+
+// shellAgents lists the agent metadata labels codebox stamps on a
+// container (one boolean label per installed agent), in the precedence
+// order `codebox shell` uses to pick the single agent for the tmux
+// right-hand pane. The label key doubles as the command to run, so the
+// value selected here is always one of these literals — never
+// attacker-influenced label content.
+var shellAgents = []string{"claude", "codex", "opencode"}
+
+// shellMode reads the metadata labels codebox stamps on a container at
+// create time and reports how `codebox shell` should open: whether to
+// launch tmux, and which agent (if any) to run in its right-hand pane.
+// The `tmux` label and every entry in shellAgents are fetched in one
+// `<engine> inspect` call, one value per line; an unset label is an
+// empty line. A lookup error is surfaced rather than silently falling
+// back to a bare shell.
+func shellMode(
+	ctx context.Context,
+	rnr CommandRunner,
+	eng *container.Engine,
+	instance string,
+) (tmux bool, agent string, err error) {
+	keys := append([]string{"tmux"}, shellAgents...)
+	var out, errBuf bytes.Buffer
+	if err := rnr.Run(ctx, eng.Labels(instance, keys...), nil, &out, &errBuf); err != nil {
+		return false, "", wrapRunErr("look up instance labels", err, &errBuf)
+	}
+	lines := strings.Split(out.String(), "\n")
+	label := func(i int) string {
+		if i < len(lines) {
+			return strings.TrimSpace(lines[i])
+		}
+		return ""
+	}
+	tmux = label(0) == "true"
+	for i, name := range shellAgents {
+		if label(i+1) == "true" {
+			agent = name
+			break
+		}
+	}
+	return tmux, agent, nil
 }
 
 // portLineRe matches `<addr>:<port>` lines emitted by `<engine> port
@@ -94,8 +142,18 @@ func parsePortLines(s string) string {
 // single-quoted; numeric values (host port, port-forward components)
 // are emitted verbatim. Forwards target `localhost:R` so the remote
 // end is interpreted on the container side of an `-J` jump.
-func buildShellSSHCommand(remote, hostPort, instanceKey string, ports []string) string {
-	parts := []string{"ssh", "-o", "StrictHostKeyChecking=no"}
+//
+// `-t` forces a pseudo-terminal so the trailing remote command runs
+// interactively, and that command drops the operator into ~/source —
+// the per-sandbox checkout — before exec'ing their login shell. The cd
+// is best-effort: if ~/source is absent (e.g. nothing has been pushed
+// yet) the shell still opens, in the home directory.
+//
+// When tmux is true the remote command launches tmux (with a horizontal
+// split) instead of a bare login shell; a non-empty agent is run in the
+// right-hand pane. See shellRemoteCommand.
+func buildShellSSHCommand(remote, hostPort, instanceKey string, ports []string, tmux bool, agent string) string {
+	parts := []string{"ssh", "-t", "-o", "StrictHostKeyChecking=no"}
 	if instanceKey != "" {
 		parts = append(parts, "-i", shquote(instanceKey))
 	}
@@ -110,11 +168,51 @@ func buildShellSSHCommand(remote, hostPort, instanceKey string, ports []string) 
 		parts = append(parts, "-J", shquote(remote))
 	}
 	parts = append(parts,
-		fmt.Sprintf("%s@localhost", instanceUser),
 		"-p", hostPort,
+		fmt.Sprintf("%s@localhost", instanceUser),
+		shquote(shellRemoteCommand(tmux, agent)),
 	)
 	return strings.Join(parts, " ")
 }
+
+// shellRemoteCommand builds the command the in-container login shell
+// runs once ssh connects. Every variant first cd's into ~/source (the
+// per-sandbox checkout); the cd is best-effort so the shell still opens
+// when the directory is absent.
+//
+// Without tmux it exec's the operator's login shell. With tmux it
+// resumes the previous session when one is still running, so a reconnect
+// lands back in the same panes; only when no session exists does it start
+// a fresh one split horizontally into two panes, both rooted at ~/source
+// (the session inherits the cwd we just cd'd into). The `\;` reaches tmux
+// as a literal command separator: it is escaped so the in-container shell
+// passes a bare `;` through as an argument rather than treating it as its
+// own statement terminator.
+//
+// The attach is not exec'd so its failure (no live session) falls through
+// to the `||` branch, which exec's the fresh session; on a successful
+// attach tmux runs as a child and the login shell exits once it does.
+//
+// When agent is set it becomes the right-hand pane's command, run as
+// `$SHELL -lc <agent>` so the login profile (which puts the agent's
+// install dir on PATH) is sourced first. agent is pre-filtered by
+// knownAgent, so it is a bare, safe identifier.
+func shellRemoteCommand(tmux bool, agent string) string {
+	cd := fmt.Sprintf("cd ~/%s 2>/dev/null;", instanceSourceDir)
+	if !tmux {
+		return cd + " exec ${SHELL:-/bin/sh} -l"
+	}
+	newSession := ` exec tmux new-session -s ` + tmuxSession + ` \; split-window -h`
+	if agent != "" {
+		newSession += ` "$SHELL -lc ` + agent + `"`
+	}
+	return cd + ` tmux attach -t ` + tmuxSession + ` 2>/dev/null ||` + newSession
+}
+
+// tmuxSession is the fixed name of the in-container tmux session. A
+// stable name lets a reconnecting operator resume the same session
+// rather than stacking up a new one on every shell.
+const tmuxSession = "main"
 
 // shquote single-quotes s for safe embedding in a `sh -c` command.
 // Mirrors container.shquote; duplicated here so the app layer does

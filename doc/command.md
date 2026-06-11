@@ -50,7 +50,7 @@ codebox create demo \
   --https-proxy=http://proxy.corp:3128 \
   --os=debian_12 \
   --python=3.14 --node=24 --golang=1.26.0 --dotnet=10 \
-  --claude --claude-credentials --codex --opencode --podman --psql
+  --claude --claude-credentials --codex --opencode --podman --psql --tmux
 ```
 
 Flags (in help order):
@@ -73,6 +73,7 @@ Flags (in help order):
 | `--opencode`            | bool   | `false`        | Install opencode. |
 | `--podman`              | bool   | `false`        | Install rootless Podman (plus `podman-compose` and the rootless networking/storage stack, including `passt` for pasta networking) inside the instance, configure `/etc/subuid`, `/etc/subgid`, and the per-user `containers.conf` / `registries.conf`, start the container with the device/capability/security-opt flags nested containers need, and run `podman system migrate` once the container is up. |
 | `--psql`                | bool   | `false`        | Install the psql PostgreSQL client. |
+| `--tmux`                | bool   | `false`        | Install tmux and label the container `tmux=true`. Accepts `--tmux` or `--tmux=true|false`. `codebox shell` reads that label back and launches tmux (a fresh session split horizontally into two panes, both rooted at `~/source`) instead of a bare login shell. When an agent is also enabled (e.g. `--claude`), the container carries a matching agent label (`claude=true`) and that agent runs in the right-hand pane. |
 
 The `--help` output for `create` ends with six footer sections that
 restate the legal values for each kind of flag:
@@ -112,7 +113,19 @@ codebox list --orchestrator=podman --remote=user@host
 
 ### `codebox shell INSTANCE`
 
-Open an interactive shell into a sandbox instance over SSH.
+Open an interactive shell into a sandbox instance over SSH. The shell
+opens in `~/source` — the per-sandbox checkout — falling back to the
+home directory when `~/source` does not exist yet.
+
+If the instance was created with `--tmux` (it carries the `tmux=true`
+container label), `codebox shell` launches tmux instead of a bare login
+shell: a fresh session split horizontally into two panes, both rooted at
+`~/source`. When the instance also carries an agent label (e.g.
+`claude=true`, set when it was created with an agent such as `--claude`),
+that agent runs in the right-hand pane — through a login shell so its
+install directory is on `PATH` — while the left pane is an ordinary
+shell. When several agent labels are set, claude takes precedence, then
+codex, then opencode.
 
 ```
 codebox shell demo \
@@ -157,12 +170,12 @@ Positional arguments:
 Invocations without `--`, or with extra positionals before it, are
 rejected with a non-zero exit code.
 
-### `codebox pull INSTANCE`
+### `codebox file pull INSTANCE`
 
 Copy a file or directory from a sandbox instance down to the local machine.
 
 ```
-codebox pull demo \
+codebox file pull demo \
   --orchestrator=podman --remote=user@host --instance-key=~/.ssh/id_rsa \
   --instance-path=/workspace/out --local-path=./results
 ```
@@ -175,12 +188,12 @@ codebox pull demo \
 | `--instance-path` | path   | *(unset)* | File or directory on the instance to copy from. |
 | `--local-path`    | path   | *(unset)* | Local directory to copy into. |
 
-### `codebox push INSTANCE`
+### `codebox file push INSTANCE`
 
 Copy a file or directory from the local machine up to a sandbox instance.
 
 ```
-codebox push demo \
+codebox file push demo \
   --orchestrator=podman --remote=user@host --instance-key=~/.ssh/id_rsa \
   --local-path=./payload --instance-path=/workspace/in
 ```
@@ -372,6 +385,65 @@ every active mount whose source column in `/proc/mounts` is
 unmount before tearing the container down — see
 [`delete` teardown](#delete-teardown).
 
+### `codebox workflow REFSPEC`
+
+Create an instance, push a branch into it, and open a shell — a
+shortcut that chains `create`, `git push`, and `shell` into a single
+command. `REFSPEC` takes the same two shapes as
+[`codebox git push`](#codebox-git-push-instance-refspec); its
+`target_branch` doubles as the new instance name **and** as the branch
+checked out at `~/source` inside the sandbox, so it must satisfy the
+same [instance-name rules](#instance-name).
+
+```
+codebox workflow origin/main:issue-1234 \
+  --orchestrator=podman --remote=user@host --instance-key=~/.ssh/id_rsa \
+  --os=debian_13 --node=24 --claude --tmux
+
+codebox workflow main:issue-1234          # local branch, no upstream fetch
+```
+
+`workflow` is exactly equivalent to running, in order:
+
+```
+codebox create target_branch [create flags]
+codebox git push target_branch REFSPEC
+codebox shell target_branch
+```
+
+Argument formats — the refspec and every flag — are validated up
+front, so a malformed refspec or an unsupported flag (`--codex`,
+`--opencode`) is rejected before any container is built. All
+create-time flags are forwarded verbatim to the underlying `create`
+step; see [`create`](#codebox-create-instance) for their full
+semantics. When `--tmux` is set, the final `shell` step launches tmux
+in `~/source` (with any installed agent in the right-hand pane).
+
+Flags (in help order):
+
+| Flag                    | Type   | Default     | Description |
+| ----------------------- | ------ | ----------- | ----------- |
+| `--orchestrator`        | enum   | `podman`    | Container orchestrator (`podman`, `docker`). |
+| `--remote`              | string | *(local)*   | Provision on a remote host (`user@host`). |
+| `--instance-key`        | path   | *(auto)*    | SSH key for logging into the new instance. |
+| `--rebuild`             | bool   | `false`     | Force a rebuild of the base image even if a cached one exists. |
+| `--https-proxy`         | string | *(unset)*   | Append `export HTTPS_PROXY="<value>"` to the in-container user's login profile (see [`create`](#codebox-create-instance)). |
+| `--os`                  | enum   | `debian_13` | Base OS image (`debian_12`, `debian_13`, `ubuntu_24`, `ubuntu_26`, `redhat_10`). |
+| `--python`              | enum   | *(none)*    | Install Python at `3.12`, `3.13`, or `3.14`. |
+| `--node`                | enum   | *(none)*    | Install Node.js at major version `24`, `25`, or `26`. |
+| `--golang`              | enum   | *(none)*    | Install Go at version `1.26.0`. |
+| `--dotnet`              | enum   | *(none)*    | Install .NET at version `8` or `10`. |
+| `--claude`              | bool   | `false`     | Install Claude Code. |
+| `--claude-credentials`  | bool   | `false`     | Copy `~/.claude/.credentials.json` into the instance after it starts (requires `--claude`). |
+| `--codex`               | bool   | `false`     | Install OpenAI Codex CLI. |
+| `--opencode`            | bool   | `false`     | Install opencode. |
+| `--podman`              | bool   | `false`     | Install rootless Podman inside the instance. |
+| `--psql`                | bool   | `false`     | Install the psql PostgreSQL client. |
+| `--tmux`                | bool   | `false`     | Install tmux and label the container `tmux=true`; the workflow's `shell` step launches it in `~/source`. Accepts `--tmux` or `--tmux=true|false`. |
+
+Like `create`, the `--help` output for `workflow` ends with the same
+six footer sections restating the legal values for each kind of flag.
+
 ### `codebox completion SHELL`
 
 Emit a shell-completion script. The script wires `<TAB>` after
@@ -495,8 +567,8 @@ later layer does not invalidate the package install cache:
 
 1. Install base packages — `ca-certificates`, `nano`, `vim`, `sudo`,
    `openssl`, `openssh-server`, `rsync`, `git`,
-   `iputils-ping`/`iputils`, `dnsutils`/`bind-utils`, `curl`. Names are
-   remapped per distro family. The distro's build toolchain
+   `iputils-ping`/`iputils`, `dnsutils`/`bind-utils`, `curl`,
+   `net-tools`. Names are remapped per distro family. The distro's build toolchain
    (`build-essential` on apt, `"Development Tools"` group on dnf) is
    installed in the same layer.
 2. OS-specific fixes (`debian_13`, `ubuntu_26`, `redhat_10` only):
@@ -545,6 +617,7 @@ distros (Red Hat). Below, **PROFILE** refers to whichever file applies.
 | Flag       | Installs |
 | ---------- | -------- |
 | `--psql`   | `postgresql-client` (apt) or `postgresql` (dnf) via the distro package manager. |
+| `--tmux`   | `tmux` via the distro package manager (same name on apt and dnf). The container is additionally labelled `tmux=true`; `codebox shell` reads that label and launches tmux (horizontal split, both panes in `~/source`) on connect. Installed AI agents are recorded as their own boolean labels (e.g. `claude=true`); when one is present `codebox shell` runs that agent in the right-hand pane via a login shell (precedence: claude, codex, opencode). |
 | `--golang=VER` | Downloads `https://go.dev/dl/goVER.linux-${arch}.tar.gz` (arch detected from `uname -m`; `amd64` and `arm64` supported), unpacks it to `/usr/local/go`, and appends `export PATH="/usr/local/go/bin:$PATH"` to **PROFILE**. |
 | `--dotnet=VER` | Runs `https://dot.net/v1/dotnet-install.sh --channel VER.0 --install-dir /usr/local/dotnet`, symlinks the runner to `/usr/local/bin/dotnet`, and appends `DOTNET_ROOT`, `PATH`, and `DOTNET_CLI_TELEMETRY_OPTOUT=1` exports to **PROFILE**. |
 | `--python=VER` | Runs `https://astral.sh/uv/install.sh` as user `user`, then runs `uv python install VER && uv python pin --global VER` to download the prebuilt CPython and set it as the global default for `uv`. (The `export PATH="$HOME/.local/bin:$PATH"` line is emitted once — see `--claude`.) |
@@ -587,9 +660,9 @@ step succeeds. The use-case layer:
    (the flag name is included in the wrapper), so the operator does
    not have to wait for an image build to surface the problem.
 2. Looks up the host-side port for the in-container sshd via
-   `<engine> port INSTANCE 2222`, exactly like `push` / `pull`.
+   `<engine> port INSTANCE 2222`, exactly like `file push` / `file pull`.
 3. Echoes the assembled rsync command bracketed by horizontal rules
-   (mirroring the Dockerfile and `push`/`pull` blocks) and runs it
+   (mirroring the Dockerfile and `file push`/`file pull` blocks) and runs it
    **locally** so progress streams to the operator's terminal.
 4. If the first rsync fails (most often because sshd inside the
    container is still coming up), waits **2 seconds** and retries
@@ -647,10 +720,10 @@ rsync --verbose --archive --compress --update --progress \
 6. **Untag.** `podman untag NAME` (or `docker rmi NAME`, since docker
    has no `untag` verb) is run silently to drop every tag on the image
    codebox built for the instance.
-6. **Local git remote cleanup.** `git remote get-url codebox-NAME` is
+7. **Local git remote cleanup.** `git remote get-url codebox-NAME` is
    run in the operator's current directory; if it succeeds (i.e. the
    matching instance remote is still wired up from an earlier
-   `codebox git push` or `pull`), codebox prints `Removing local git
+   `codebox git push` or `git pull`), codebox prints `Removing local git
    remote "codebox-NAME"...` and runs `git remote remove
    codebox-NAME`. A non-git directory, or a missing remote, is treated
    as a silent no-op — `--remote` never changes this: the cleanup is
@@ -753,9 +826,9 @@ ssh failures (exit status 255) surface as a distinct error naming the
 host so they can be told apart from a non-zero exit from the inner
 command.
 
-## `push` and `pull` file transfer
+## `file push` and `file pull` file transfer
 
-`push` and `pull` share an implementation: each builds an rsync
+`file push` and `file pull` share an implementation: each builds an rsync
 command tunnelled over ssh and runs it locally so rsync's progress
 stream reaches the operator's terminal directly. The use-case layer
 performs, in order:
@@ -788,8 +861,8 @@ performs, in order:
    - `--remote=user@host` becomes `-J user@host` so the operator's
      bastion is interpreted on the local side and rsync connects to
      the container's published port through the jump.
-   - `SRC` and `DST` are oriented per command: `push` sends
-     `LOCAL → user@localhost:INSTANCE_PATH`, `pull` sends
+   - `SRC` and `DST` are oriented per command: `file push` sends
+     `LOCAL → user@localhost:INSTANCE_PATH`, `file pull` sends
      `user@localhost:INSTANCE_PATH → LOCAL`. The local path is
      `~`-expanded before being passed to rsync.
 
@@ -909,7 +982,7 @@ To check it out locally:
   (when `--remote` is set).
 - The `git push` / `git fetch` invocations are echoed to stdout
   bracketed by horizontal rules, mirroring the Dockerfile and rsync
-  blocks emitted by `create` and `push`/`pull`.
+  blocks emitted by `create` and `file push`/`file pull`.
 
 ## Shell completion
 
@@ -922,8 +995,8 @@ INSTANCE positional arguments.
 ### Instance-name candidates
 
 Subcommands whose first positional is `INSTANCE` — `delete`, `shell`,
-`exec`, `pull`, `push`, `git push`, `git pull`, `mount`, `umount` —
-surface live instance names to the shell. At each tab press the completion path runs a
+`exec`, `file pull`, `file push`, `git push`, `git pull`, `mount`,
+`umount` — surface live instance names to the shell. At each tab press the completion path runs a
 single orchestrator query:
 
 ```
@@ -942,8 +1015,8 @@ flags from the command line:
   operator's normal ssh configuration to reach the orchestrator host,
   never the per-instance key.
 
-`create`'s `INSTANCE` argument is a new name, so no completion is
-offered for it.
+`create`'s `INSTANCE` argument and `workflow`'s `REFSPEC` both name a
+new instance, so no instance-name completion is offered for them.
 
 ### Failure modes
 
@@ -968,8 +1041,8 @@ arguments the suppression is cancelled, so every help path
 
 ## Status
 
-`create`, `delete`, `list`, `shell`, `exec`, `pull`, `push`,
-`git push` / `git pull`, `mount` / `umount`, and `completion` are all
-implemented end-to-end. The behaviours described above are the
+`create`, `delete`, `list`, `shell`, `exec`, `file push` / `file pull`,
+`git push` / `git pull`, `mount` / `umount`, `workflow`, and
+`completion` are all implemented end-to-end. The behaviours described above are the
 **specification** the implementation is held against — if the two
 disagree, this file is canonical and the code should be updated.

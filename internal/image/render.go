@@ -100,6 +100,9 @@ func renderExtras(b *strings.Builder, s spec, opts Options) {
 	if opts.Psql {
 		rootPkgs = append(rootPkgs, s.family.psqlPkg())
 	}
+	if opts.Tmux {
+		rootPkgs = append(rootPkgs, s.family.pkg("tmux"))
+	}
 	if opts.Node != "" {
 		rootPkgs = append(rootPkgs, s.family.nodeDeps()...)
 	}

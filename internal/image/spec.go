@@ -153,7 +153,7 @@ var basePackages = []string{
 	"ca-certificates",
 	"nano", "vim", "sudo",
 	"openssl", "openssh-server", "rsync", "git",
-	"iputils-ping", "dnsutils", "curl",
+	"iputils-ping", "dnsutils", "curl", "net-tools",
 }
 
 // podmanPackages is the canonical set installed when --podman is set:

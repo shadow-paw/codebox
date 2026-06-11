@@ -103,6 +103,7 @@ func TestWorkflow_ChainsCreateThenGitPushThenShell(t *testing.T) {
 		reply{},                          // ssh checkout
 		// --- Shell ---
 		reply{stdout: "demo\n"},          // ps -a — exists
+		reply{stdout: ""},                // tmux label — disabled
 		reply{stdout: "0.0.0.0:33000\n"}, // port lookup
 		reply{},                          // interactive ssh
 	)

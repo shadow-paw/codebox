@@ -28,6 +28,7 @@ type createOpts struct {
 	opencode          bool
 	podman            bool
 	psql              bool
+	tmux              bool
 }
 
 const createHelpFooter = `
@@ -56,6 +57,7 @@ Agents:
 Tools:
   --podman   Rootless Podman (inside the instance)
   --psql     psql PostgreSQL client
+  --tmux     tmux terminal multiplexer (codebox shell launches it on connect)
 
 Network:
   --https-proxy=URL   Export HTTPS_PROXY=URL from the in-container user login profile
@@ -113,6 +115,8 @@ func newCreateCmd() *cobra.Command {
 		"Install rootless Podman inside the instance")
 	f.BoolVar(&opts.psql, "psql", false,
 		"Install the psql PostgreSQL client")
+	f.BoolVar(&opts.tmux, "tmux", false,
+		"Install tmux; codebox shell launches it on connect")
 
 	registerCreateValueCompletions(cmd)
 
@@ -170,6 +174,7 @@ func runCreate(ctx context.Context, out io.Writer, opts createOpts) error {
 		Claude:            opts.claude,
 		ClaudeCredentials: opts.claudeCredentials,
 		Psql:              opts.psql,
+		Tmux:              opts.tmux,
 		Podman:            opts.podman,
 	})
 }

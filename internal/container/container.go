@@ -120,19 +120,47 @@ const podmanRunFlags = "--device /dev/fuse --device /dev/net/tun " +
 // the instance name so an interactive shell shows the operator which
 // sandbox they are in.
 //
+// labels carries extra `key=value` metadata stamped onto the container
+// in addition to the mandatory `codebox=true` — e.g. `tmux=true` and a
+// boolean label per installed agent (`claude=true`). `codebox shell`
+// reads them back (see Labels) to decide whether to launch tmux on
+// connect and which agent to run in its right-hand pane. Entries are
+// emitted in the given order and must already be safe `key=value`
+// literals (codebox controls them).
+//
 // podman adds the device/capability/security-opt flags
 // (podmanRunFlags) the instance needs to run rootless Podman of its
 // own (--podman); nested containers need them for fuse storage, pasta
 // networking, and to escape the host's SELinux/seccomp confinement.
-func (e *Engine) Run(instance string, podman bool) string {
+func (e *Engine) Run(instance string, podman bool, labels []string) string {
 	q := shquote(instance)
+	labelFlags := ""
+	for _, l := range labels {
+		labelFlags += " --label " + l
+	}
 	podmanFlags := ""
 	if podman {
 		podmanFlags = " " + podmanRunFlags
 	}
 	return fmt.Sprintf(
-		`%s run -d --name %s --hostname %s --label codebox=true%s --publish-all %s`,
-		e.bin, q, q, podmanFlags, q,
+		`%s run -d --name %s --hostname %s --label codebox=true%s%s --publish-all %s`,
+		e.bin, q, q, labelFlags, podmanFlags, q,
+	)
+}
+
+// Labels returns the shell command that prints the values of the named
+// container labels on stdout, one per line in the order requested; an
+// unset label yields an empty line. The keys are codebox-controlled
+// literals (e.g. "tmux", "agent"), embedded into the Go-template format
+// directly; the instance name is shell-quoted.
+func (e *Engine) Labels(instance string, keys ...string) string {
+	exprs := make([]string, len(keys))
+	for i, k := range keys {
+		exprs[i] = fmt.Sprintf(`{{ index .Config.Labels "%s" }}`, k)
+	}
+	return fmt.Sprintf(
+		`%s inspect %s --format '%s'`,
+		e.bin, shquote(instance), strings.Join(exprs, `{{"\n"}}`),
 	)
 }
 

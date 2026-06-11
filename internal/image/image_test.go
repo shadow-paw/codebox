@@ -71,7 +71,7 @@ func TestGenerate_SyntaxDirectiveIsFirstLine(t *testing.T) {
 func TestGenerate_AptUsesCanonicalNames(t *testing.T) {
 	t.Parallel()
 	out := generate(t, "debian_13")
-	for _, p := range []string{"apt-get install", "iputils-ping", "dnsutils", "git"} {
+	for _, p := range []string{"apt-get install", "iputils-ping", "dnsutils", "git", "net-tools"} {
 		if !strings.Contains(out, p) {
 			t.Errorf("debian_13 missing %q", p)
 		}
@@ -84,7 +84,7 @@ func TestGenerate_AptUsesCanonicalNames(t *testing.T) {
 func TestGenerate_DnfRemapsPackageNames(t *testing.T) {
 	t.Parallel()
 	out := generate(t, "redhat_10")
-	for _, p := range []string{"dnf install", "iputils", "bind-utils", "git"} {
+	for _, p := range []string{"dnf install", "iputils", "bind-utils", "git", "net-tools"} {
 		if !strings.Contains(out, p) {
 			t.Errorf("redhat_10 missing %q", p)
 		}
@@ -245,11 +245,28 @@ func TestGenerate_ExtrasOmittedByDefault(t *testing.T) {
 		"nvm", "uv/install.sh", "dotnet-install.sh",
 		"go.dev/dl/go", "postgresql-client", "DOTNET_CLI_TELEMETRY_OPTOUT",
 		"libicu", "USER user", "USER root",
-		"claude.ai/install.sh", "HTTPS_PROXY",
+		"claude.ai/install.sh", "HTTPS_PROXY", "tmux",
 	} {
 		if strings.Contains(out, marker) {
 			t.Errorf("default Dockerfile should not mention %q\n%s", marker, out)
 		}
+	}
+}
+
+// TestGenerate_TmuxInstallsPackage pins that --tmux adds the tmux
+// package to the root-scoped install layer on both package-manager
+// families (the name is identical on apt and dnf, so no remap).
+func TestGenerate_TmuxInstallsPackage(t *testing.T) {
+	t.Parallel()
+	for _, osKey := range []string{"debian_13", "redhat_10"} {
+		osKey := osKey
+		t.Run(osKey, func(t *testing.T) {
+			t.Parallel()
+			out := generateOpts(t, image.Options{OS: osKey, Tmux: true})
+			if !strings.Contains(out, "tmux") {
+				t.Errorf("%s with Tmux should install tmux:\n%s", osKey, out)
+			}
+		})
 	}
 }
 

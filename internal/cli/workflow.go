@@ -27,6 +27,7 @@ type workflowOpts struct {
 	opencode          bool
 	podman            bool
 	psql              bool
+	tmux              bool
 }
 
 const workflowHelpTemplate = `{{with (or .Long .Short)}}{{. | trimTrailingWhitespaces}}
@@ -95,6 +96,8 @@ func newWorkflowCmd() *cobra.Command {
 		"Install rootless Podman inside the instance")
 	f.BoolVar(&opts.psql, "psql", false,
 		"Install the psql PostgreSQL client")
+	f.BoolVar(&opts.tmux, "tmux", false,
+		"Install tmux; the workflow shell launches it in the source directory")
 
 	registerWorkflowValueCompletions(cmd)
 
@@ -155,6 +158,7 @@ func runWorkflow(
 		Claude:            opts.claude,
 		ClaudeCredentials: opts.claudeCredentials,
 		Psql:              opts.psql,
+		Tmux:              opts.tmux,
 		Podman:            opts.podman,
 	})
 }

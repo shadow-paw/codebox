@@ -17,6 +17,7 @@ func TestShell_HappyPath_Local(t *testing.T) {
 	a, fr := newApp(t,
 		&stubKeys{key: "k"},
 		reply{stdout: "demo\nother\n"},   // ps -a — exists
+		reply{stdout: ""},                // tmux label — unset (disabled)
 		reply{stdout: "0.0.0.0:33000\n"}, // port lookup
 		reply{},                          // local ssh exec — succeeds
 	)
@@ -30,24 +31,127 @@ func TestShell_HappyPath_Local(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Shell: %v", err)
 	}
-	if got := len(fr.calls); got != 3 {
-		t.Fatalf("expected 3 runner calls (ps -a, port, ssh), got %d: %+v", got, fr.calls)
+	if got := len(fr.calls); got != 4 {
+		t.Fatalf("expected 4 runner calls (ps -a, tmux label, port, ssh), got %d: %+v", got, fr.calls)
 	}
 	if !strings.Contains(fr.calls[0].cmd, "podman ps -a --format") {
 		t.Errorf("call[0] should be ps -a, got %q", fr.calls[0].cmd)
 	}
-	if !strings.Contains(fr.calls[1].cmd, "podman port 'demo' 2222") {
-		t.Errorf("call[1] should be port lookup, got %q", fr.calls[1].cmd)
+	if !strings.Contains(fr.calls[1].cmd, `podman inspect 'demo' --format`) {
+		t.Errorf("call[1] should be the tmux label lookup, got %q", fr.calls[1].cmd)
+	}
+	if !strings.Contains(fr.calls[2].cmd, "podman port 'demo' 2222") {
+		t.Errorf("call[2] should be port lookup, got %q", fr.calls[2].cmd)
 	}
 
-	wantSSH := "ssh -o StrictHostKeyChecking=no user@localhost -p 33000"
-	if fr.calls[2].cmd != wantSSH {
-		t.Errorf("ssh command mismatch:\n got: %q\nwant: %q", fr.calls[2].cmd, wantSSH)
+	wantSSH := "ssh -t -o StrictHostKeyChecking=no -p 33000 user@localhost " +
+		"'cd ~/source 2>/dev/null; exec ${SHELL:-/bin/sh} -l'"
+	if fr.calls[3].cmd != wantSSH {
+		t.Errorf("ssh command mismatch:\n got: %q\nwant: %q", fr.calls[3].cmd, wantSSH)
 	}
 	// The interactive ssh runs locally, never tunnelled through --remote.
-	if fr.calls[2].host != "" {
+	if fr.calls[3].host != "" {
 		t.Errorf("interactive ssh should run on the local host (host=\"\"), got %q",
-			fr.calls[2].host)
+			fr.calls[3].host)
+	}
+}
+
+// TestShell_TmuxLabelLaunchesTmux pins that when the instance carries
+// the tmux=true label the interactive ssh launches tmux with a
+// horizontal split, rooted at ~/source.
+func TestShell_TmuxLabelLaunchesTmux(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: "demo\n"},          // ps -a — exists
+		reply{stdout: "true\n"},          // tmux label — enabled
+		reply{stdout: "0.0.0.0:33000\n"}, // port lookup
+		reply{},                          // local ssh exec
+	)
+
+	err := a.Shell(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{},
+		app.ShellRequest{Instance: "demo", Orchestrator: "podman"})
+	if err != nil {
+		t.Fatalf("Shell: %v", err)
+	}
+	wantSSH := "ssh -t -o StrictHostKeyChecking=no -p 33000 user@localhost " +
+		`'cd ~/source 2>/dev/null; tmux attach -t main 2>/dev/null || exec tmux new-session -s main \; split-window -h'`
+	if fr.calls[3].cmd != wantSSH {
+		t.Errorf("ssh command mismatch:\n got: %q\nwant: %q", fr.calls[3].cmd, wantSSH)
+	}
+}
+
+// TestShell_TmuxWithAgentRunsAgentOnRight pins that when the instance
+// carries both tmux=true and an agent label, the right-hand tmux pane
+// runs that agent through a login shell (so its install dir is on PATH).
+func TestShell_TmuxWithAgentRunsAgentOnRight(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: "demo\n"},           // ps -a — exists
+		reply{stdout: "true\ntrue\n\n\n"}, // labels: tmux=true, claude=true, codex/opencode unset
+		reply{stdout: "0.0.0.0:33000\n"},  // port lookup
+		reply{},                           // local ssh exec
+	)
+
+	err := a.Shell(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{},
+		app.ShellRequest{Instance: "demo", Orchestrator: "podman"})
+	if err != nil {
+		t.Fatalf("Shell: %v", err)
+	}
+	wantSSH := "ssh -t -o StrictHostKeyChecking=no -p 33000 user@localhost " +
+		`'cd ~/source 2>/dev/null; tmux attach -t main 2>/dev/null || exec tmux new-session -s main \; split-window -h "$SHELL -lc claude"'`
+	if fr.calls[3].cmd != wantSSH {
+		t.Errorf("ssh command mismatch:\n got: %q\nwant: %q", fr.calls[3].cmd, wantSSH)
+	}
+}
+
+// TestShell_AgentLabelNotTrueIgnored pins that an agent label whose
+// value is anything other than "true" does not enable the agent — the
+// right pane falls back to a plain split.
+func TestShell_AgentLabelNotTrueIgnored(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: "demo\n"},
+		reply{stdout: "true\ngarbage\n\n\n"}, // claude label present but not "true"
+		reply{stdout: "0.0.0.0:33000\n"},
+		reply{},
+	)
+
+	err := a.Shell(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{},
+		app.ShellRequest{Instance: "demo", Orchestrator: "podman"})
+	if err != nil {
+		t.Fatalf("Shell: %v", err)
+	}
+	wantSSH := "ssh -t -o StrictHostKeyChecking=no -p 33000 user@localhost " +
+		`'cd ~/source 2>/dev/null; tmux attach -t main 2>/dev/null || exec tmux new-session -s main \; split-window -h'`
+	if fr.calls[3].cmd != wantSSH {
+		t.Errorf("non-true agent label should be ignored:\n got: %q\nwant: %q", fr.calls[3].cmd, wantSSH)
+	}
+}
+
+// TestShell_AgentPrecedence pins that when more than one agent label is
+// set, the first in shellAgents precedence (claude) wins.
+func TestShell_AgentPrecedence(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: "demo\n"},
+		reply{stdout: "true\ntrue\ntrue\ntrue\n"}, // tmux + all three agents
+		reply{stdout: "0.0.0.0:33000\n"},
+		reply{},
+	)
+
+	err := a.Shell(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{},
+		app.ShellRequest{Instance: "demo", Orchestrator: "podman"})
+	if err != nil {
+		t.Fatalf("Shell: %v", err)
+	}
+	wantSSH := "ssh -t -o StrictHostKeyChecking=no -p 33000 user@localhost " +
+		`'cd ~/source 2>/dev/null; tmux attach -t main 2>/dev/null || exec tmux new-session -s main \; split-window -h "$SHELL -lc claude"'`
+	if fr.calls[3].cmd != wantSSH {
+		t.Errorf("claude should win precedence:\n got: %q\nwant: %q", fr.calls[3].cmd, wantSSH)
 	}
 }
 
@@ -56,6 +160,7 @@ func TestShell_RemoteAddsJumpAndLooksUpPortViaSSH(t *testing.T) {
 	a, fr := newApp(t,
 		&stubKeys{key: "k"},
 		reply{stdout: "demo\n"},
+		reply{stdout: ""}, // tmux label — disabled
 		reply{stdout: "0.0.0.0:44000\n"},
 		reply{},
 	)
@@ -70,16 +175,17 @@ func TestShell_RemoteAddsJumpAndLooksUpPortViaSSH(t *testing.T) {
 		t.Fatalf("Shell: %v", err)
 	}
 	// Port lookup must hit the remote host…
-	if fr.calls[1].host != "ops@bastion" {
-		t.Errorf("port lookup should target the remote host, got %q", fr.calls[1].host)
+	if fr.calls[2].host != "ops@bastion" {
+		t.Errorf("port lookup should target the remote host, got %q", fr.calls[2].host)
 	}
 	// …but the interactive ssh always runs locally with -J.
-	if fr.calls[2].host != "" {
-		t.Errorf("interactive ssh should run locally, got host %q", fr.calls[2].host)
+	if fr.calls[3].host != "" {
+		t.Errorf("interactive ssh should run locally, got host %q", fr.calls[3].host)
 	}
-	wantSSH := "ssh -o StrictHostKeyChecking=no -J 'ops@bastion' user@localhost -p 44000"
-	if fr.calls[2].cmd != wantSSH {
-		t.Errorf("ssh command mismatch:\n got: %q\nwant: %q", fr.calls[2].cmd, wantSSH)
+	wantSSH := "ssh -t -o StrictHostKeyChecking=no -J 'ops@bastion' -p 44000 user@localhost " +
+		"'cd ~/source 2>/dev/null; exec ${SHELL:-/bin/sh} -l'"
+	if fr.calls[3].cmd != wantSSH {
+		t.Errorf("ssh command mismatch:\n got: %q\nwant: %q", fr.calls[3].cmd, wantSSH)
 	}
 }
 
@@ -88,6 +194,7 @@ func TestShell_InstanceKeyExpandsHomeAndAddsDashI(t *testing.T) {
 	a, fr := newApp(t,
 		&stubKeys{key: "k"},
 		reply{stdout: "demo\n"},
+		reply{stdout: ""}, // tmux label — disabled
 		reply{stdout: "[::]:33000\n"},
 		reply{},
 	)
@@ -101,9 +208,10 @@ func TestShell_InstanceKeyExpandsHomeAndAddsDashI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Shell: %v", err)
 	}
-	wantSSH := "ssh -o StrictHostKeyChecking=no -i '/home/op/.ssh/id_ed25519' user@localhost -p 33000"
-	if fr.calls[2].cmd != wantSSH {
-		t.Errorf("ssh command mismatch:\n got: %q\nwant: %q", fr.calls[2].cmd, wantSSH)
+	wantSSH := "ssh -t -o StrictHostKeyChecking=no -i '/home/op/.ssh/id_ed25519' -p 33000 user@localhost " +
+		"'cd ~/source 2>/dev/null; exec ${SHELL:-/bin/sh} -l'"
+	if fr.calls[3].cmd != wantSSH {
+		t.Errorf("ssh command mismatch:\n got: %q\nwant: %q", fr.calls[3].cmd, wantSSH)
 	}
 }
 
@@ -112,6 +220,7 @@ func TestShell_PortForwardsAddedAsLocalhostL(t *testing.T) {
 	a, fr := newApp(t,
 		&stubKeys{key: "k"},
 		reply{stdout: "demo\n"},
+		reply{stdout: ""}, // tmux label — disabled
 		reply{stdout: "0.0.0.0:33000\n"},
 		reply{},
 	)
@@ -125,7 +234,7 @@ func TestShell_PortForwardsAddedAsLocalhostL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Shell: %v", err)
 	}
-	got := fr.calls[2].cmd
+	got := fr.calls[3].cmd
 	for _, want := range []string{
 		"-L '8000:localhost:3000'",
 		"-L '8001:localhost:3001'",
@@ -148,6 +257,7 @@ func TestShell_CombinesKeyJumpAndForwards(t *testing.T) {
 	a, fr := newApp(t,
 		&stubKeys{key: "k"},
 		reply{stdout: "demo\n"},
+		reply{stdout: ""}, // tmux label — disabled
 		reply{stdout: "0.0.0.0:55000\n"},
 		reply{},
 	)
@@ -163,13 +273,15 @@ func TestShell_CombinesKeyJumpAndForwards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Shell: %v", err)
 	}
-	wantSSH := "ssh -o StrictHostKeyChecking=no " +
+	wantSSH := "ssh -t -o StrictHostKeyChecking=no " +
 		"-i '/keys/id_rsa' " +
 		"-L '8000:localhost:3000' " +
 		"-J 'ops@bastion' " +
-		"user@localhost -p 55000"
-	if fr.calls[2].cmd != wantSSH {
-		t.Errorf("ssh command mismatch:\n got: %q\nwant: %q", fr.calls[2].cmd, wantSSH)
+		"-p 55000 " +
+		"user@localhost " +
+		"'cd ~/source 2>/dev/null; exec ${SHELL:-/bin/sh} -l'"
+	if fr.calls[3].cmd != wantSSH {
+		t.Errorf("ssh command mismatch:\n got: %q\nwant: %q", fr.calls[3].cmd, wantSSH)
 	}
 }
 
@@ -198,6 +310,7 @@ func TestShell_PortNotPublished(t *testing.T) {
 	a, _ := newApp(t,
 		&stubKeys{key: "k"},
 		reply{stdout: "demo\n"},
+		reply{stdout: ""}, // tmux label — disabled
 		reply{stdout: ""}, // port lookup empty (container stopped)
 	)
 
@@ -216,6 +329,7 @@ func TestShell_PortLookupFailureSurfacesStderr(t *testing.T) {
 	a, _ := newApp(t,
 		&stubKeys{key: "k"},
 		reply{stdout: "demo\n"},
+		reply{stdout: ""}, // tmux label — disabled
 		reply{stderr: "Error: no such container\n", err: &exec.ExitError{}},
 	)
 
@@ -250,6 +364,7 @@ func TestShell_InteractiveExitStatusPropagated(t *testing.T) {
 	a, _ := newApp(t,
 		&stubKeys{key: "k"},
 		reply{stdout: "demo\n"},
+		reply{stdout: ""}, // tmux label — disabled
 		reply{stdout: "0.0.0.0:33000\n"},
 		reply{err: exitErr}, // user logs out with non-zero status
 	)

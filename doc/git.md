@@ -47,6 +47,17 @@ any work; otherwise they fail with
 `not a git repository: no .git directory in <cwd>`. Run them from
 the same directory you would run plain `git` from.
 
+Steps 2–4 (create, push, shell) collapse into a single command with
+`codebox workflow`, which accepts every `create` flag and the same
+refspec as `git push`:
+
+```sh
+codebox workflow origin/main:issue-1234 --node=25 --claude
+```
+
+See [`workflow`](command.md#codebox-workflow-refspec) for the full
+contract.
+
 ## What `git push` does the first time
 
 - Initialises `~/source` on the instance as a git repository (idempotent —

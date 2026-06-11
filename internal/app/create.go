@@ -77,6 +77,9 @@ type CreateRequest struct {
 
 	// Optional tools.
 	Psql bool
+	// Tmux installs tmux in the image and labels the container
+	// `tmux=true` so `codebox shell` launches tmux on connect.
+	Tmux bool
 	// Podman installs rootless Podman inside the instance and starts the
 	// container with --privileged so nested containers can run.
 	Podman bool
@@ -120,6 +123,7 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 		Dotnet:        req.Dotnet,
 		Claude:        req.Claude,
 		Psql:          req.Psql,
+		Tmux:          req.Tmux,
 		Podman:        req.Podman,
 	}); err != nil {
 		return err
@@ -139,7 +143,8 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 
 	_, _ = fmt.Fprintf(w, "Starting container %q...\n", req.Instance)
 	var runOut, runErr bytes.Buffer
-	if err := rnr.Run(ctx, eng.Run(req.Instance, req.Podman), nil, &runOut, &runErr); err != nil {
+	runCmd := eng.Run(req.Instance, req.Podman, metadataLabels(req))
+	if err := rnr.Run(ctx, runCmd, nil, &runOut, &runErr); err != nil {
 		return wrapRunErr("start container", err, &runErr)
 	}
 
@@ -347,6 +352,27 @@ func deleteHint(req CreateRequest) string {
 		parts = append(parts, "--remote="+req.Remote)
 	}
 	return strings.Join(parts, " ")
+}
+
+// metadataLabels builds the `key=value` metadata labels codebox stamps
+// on the container to record what was installed: `tmux=true` and a
+// boolean label per AI agent (e.g. `claude=true`). `codebox shell` reads
+// them back to decide whether to launch tmux and which agent to run in
+// its right-hand pane; the label keys for agents match the command name
+// so the shell can run them directly.
+//
+// Only --claude is installable today (codex/opencode are rejected at the
+// CLI before they reach here), so only its label can appear now; the
+// others slot in unchanged once their installers ship.
+func metadataLabels(req CreateRequest) []string {
+	var labels []string
+	if req.Tmux {
+		labels = append(labels, "tmux=true")
+	}
+	if req.Claude {
+		labels = append(labels, "claude=true")
+	}
+	return labels
 }
 
 // shellHint formats the `codebox shell` command suggested after a

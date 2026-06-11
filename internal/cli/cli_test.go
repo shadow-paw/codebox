@@ -57,8 +57,7 @@ func TestRun_NoArgs_ShowsBannerAndHelp(t *testing.T) {
 		"list",
 		"shell",
 		"exec",
-		"pull",
-		"push",
+		"file",
 	}
 	for _, want := range wants {
 		if !strings.Contains(stdout, want) {
@@ -70,7 +69,7 @@ func TestRun_NoArgs_ShowsBannerAndHelp(t *testing.T) {
 func TestRun_Help_ShowsAllCommands(t *testing.T) {
 	t.Parallel()
 	stdout, _ := runCLI(t, []string{"--help"})
-	for _, c := range []string{"completion", "create", "delete", "list", "shell", "exec", "pull", "push"} {
+	for _, c := range []string{"completion", "create", "delete", "list", "shell", "exec", "file"} {
 		if !strings.Contains(stdout, c) {
 			t.Errorf("--help missing command %q", c)
 		}
@@ -106,8 +105,7 @@ func TestRun_SubcommandHelpFormsAreIdentical(t *testing.T) {
 		"list",
 		"shell",
 		"exec",
-		"pull",
-		"push",
+		"file",
 		"git",
 		"mount",
 		"umount",
@@ -154,21 +152,21 @@ func diffFirstLines(a, b string) string {
 	return sb.String()
 }
 
-// TestPullPush_HelpListsFlags exercises the cobra wiring for the
-// pull/push commands without invoking their action layer. The full
-// behaviour is covered by app-layer tests; this guards the flag
+// TestFilePushPull_HelpListsFlags exercises the cobra wiring for the
+// `file push`/`file pull` commands without invoking their action layer.
+// The full behaviour is covered by app-layer tests; this guards the flag
 // surface visible to operators: the command-specific flags appear in
 // the Flags: block in declared order, and the inherited
 // --orchestrator, --remote, --instance-key fall under Global Flags:.
-func TestPullPush_HelpListsFlags(t *testing.T) {
+func TestFilePushPull_HelpListsFlags(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]struct{ local, global []string }{
-		"pull": {
+		"file pull": {
 			local:  []string{"--instance-path", "--local-path"},
 			global: []string{"--instance-key", "--orchestrator", "--remote"},
 		},
-		"push": {
+		"file push": {
 			local:  []string{"--local-path", "--instance-path"},
 			global: []string{"--instance-key", "--orchestrator", "--remote"},
 		},
@@ -177,9 +175,22 @@ func TestPullPush_HelpListsFlags(t *testing.T) {
 		cmd, want := cmd, want
 		t.Run(cmd, func(t *testing.T) {
 			t.Parallel()
-			stdout, _ := runCLI(t, []string{cmd, "--help"})
+			args := append(strings.Split(cmd, " "), "--help")
+			stdout, _ := runCLI(t, args)
 			assertOrderedSections(t, stdout, want.local, want.global)
 		})
+	}
+}
+
+// TestFile_HelpListsPushAndPull guards the cobra wiring for the `file`
+// parent command and its two children, mirroring the `git` parent.
+func TestFile_HelpListsPushAndPull(t *testing.T) {
+	t.Parallel()
+	stdout, _ := runCLI(t, []string{"file", "--help"})
+	for _, want := range []string{"push", "pull"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("file --help missing subcommand %q\n%s", want, stdout)
+		}
 	}
 }
 
@@ -521,8 +532,8 @@ func TestComplete_WiredOnInstanceCommands(t *testing.T) {
 		{"delete"},
 		{"shell"},
 		{"exec"},
-		{"pull"},
-		{"push"},
+		{"file", "pull"},
+		{"file", "push"},
 		{"git", "push"},
 		{"git", "pull"},
 		{"mount"},
@@ -654,6 +665,7 @@ func TestCreate_FlagOrderMatchesSpec(t *testing.T) {
 		"--opencode",
 		"--podman",
 		"--psql",
+		"--tmux",
 	}
 	assertOrdered(t, "Flags", flagsBlock, wantLocal)
 

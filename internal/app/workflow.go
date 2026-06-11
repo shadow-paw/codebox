@@ -33,6 +33,7 @@ type WorkflowRequest struct {
 	Claude            bool
 	ClaudeCredentials bool
 	Psql              bool
+	Tmux              bool
 	Podman            bool
 }
 
@@ -74,6 +75,7 @@ func (a *App) Workflow(
 		Claude:            req.Claude,
 		ClaudeCredentials: req.ClaudeCredentials,
 		Psql:              req.Psql,
+		Tmux:              req.Tmux,
 		Podman:            req.Podman,
 	}); err != nil {
 		return err

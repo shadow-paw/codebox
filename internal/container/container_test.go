@@ -75,10 +75,41 @@ func TestBuild_NoCacheFlagOnRebuild(t *testing.T) {
 func TestRun_LabelsAndPublishAll(t *testing.T) {
 	t.Parallel()
 	e, _ := container.New("podman")
-	got := e.Run("demo", false)
+	got := e.Run("demo", false, nil)
 	want := `podman run -d --name 'demo' --hostname 'demo' --label codebox=true --publish-all 'demo'`
 	if got != want {
 		t.Fatalf("Run = %q\nwant %q", got, want)
+	}
+}
+
+// TestRun_MetadataLabels pins that the supplied metadata labels are
+// emitted as --label flags in order, after the mandatory codebox=true,
+// and that an empty set leaves the run command label-free beyond it.
+func TestRun_MetadataLabels(t *testing.T) {
+	t.Parallel()
+	e, _ := container.New("podman")
+	got := e.Run("demo", false, []string{"tmux=true", "claude=true"})
+	want := `podman run -d --name 'demo' --hostname 'demo' ` +
+		`--label codebox=true --label tmux=true --label claude=true --publish-all 'demo'`
+	if got != want {
+		t.Fatalf("Run labels = %q\nwant %q", got, want)
+	}
+	if strings.Contains(e.Run("demo", false, nil), "tmux=true") ||
+		strings.Contains(e.Run("demo", false, nil), "claude=true") {
+		t.Errorf("Run with no metadata labels must not contain tmux/agent labels")
+	}
+}
+
+// TestLabels_InspectFormat pins the inspect command shape `codebox
+// shell` uses to read the tmux + agent labels back in one call.
+func TestLabels_InspectFormat(t *testing.T) {
+	t.Parallel()
+	e, _ := container.New("podman")
+	got := e.Labels("demo", "tmux", "agent")
+	want := `podman inspect 'demo' --format ` +
+		`'{{ index .Config.Labels "tmux" }}{{"\n"}}{{ index .Config.Labels "agent" }}'`
+	if got != want {
+		t.Fatalf("Labels = %q\nwant %q", got, want)
 	}
 }
 
@@ -88,7 +119,7 @@ func TestRun_LabelsAndPublishAll(t *testing.T) {
 func TestRun_PodmanAddsDeviceAndCapFlags(t *testing.T) {
 	t.Parallel()
 	e, _ := container.New("podman")
-	got := e.Run("demo", true)
+	got := e.Run("demo", true, nil)
 	want := `podman run -d --name 'demo' --hostname 'demo' --label codebox=true ` +
 		`--device /dev/fuse --device /dev/net/tun ` +
 		`--cap-add=sys_admin --cap-add=net_admin --cap-add=mknod ` +
@@ -96,8 +127,8 @@ func TestRun_PodmanAddsDeviceAndCapFlags(t *testing.T) {
 	if got != want {
 		t.Fatalf("Run podman = %q\nwant %q", got, want)
 	}
-	if strings.Contains(e.Run("demo", false), "--device") ||
-		strings.Contains(e.Run("demo", false), "--cap-add") {
+	if strings.Contains(e.Run("demo", false, nil), "--device") ||
+		strings.Contains(e.Run("demo", false, nil), "--cap-add") {
 		t.Errorf("Run without podman must not contain device/cap flags")
 	}
 }
@@ -118,7 +149,7 @@ func TestExec_RunsAsUserWithHome(t *testing.T) {
 func TestRun_QuotesInstanceName(t *testing.T) {
 	t.Parallel()
 	e, _ := container.New("podman")
-	got := e.Run("nasty'name", false)
+	got := e.Run("nasty'name", false, nil)
 	// Single quote must be properly escaped, not break out of the string.
 	if !strings.Contains(got, `'nasty'\''name'`) {
 		t.Errorf("Run should shell-quote the instance name:\n  got: %s", got)
