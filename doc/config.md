@@ -1,0 +1,184 @@
+# Configuration
+
+`codebox` reads optional `.codebox.conf` files and folds their contents
+into the command line before the flags are parsed. Nothing in a config
+file does anything you could not do by typing flags by hand — it just
+saves you from retyping the same flags on every invocation.
+
+There are two files, both YAML, both optional:
+
+| File                | Scope   | Purpose                                                        |
+| ------------------- | ------- | -------------------------------------------------------------- |
+| `~/.codebox.conf`   | Global  | Defaults that follow you across every project.                 |
+| `./.codebox.conf`   | Project | Per-repository settings, read from the current directory.      |
+
+A missing file is silently ignored, so you only create the ones you
+need. When both exist they are merged (see [Precedence](#precedence)).
+
+> The companion documents are [`command.md`](command.md) for the full
+> flag/exit-code reference and [`git.md`](git.md) for the push/pull
+> workflow. This document covers only the config files.
+
+## File format
+
+A config file has up to three top-level keys:
+
+```yaml
+args:
+  all:            # flags injected before the subcommand (every command)
+    - ...
+  create:         # flags injected into `create` and `workflow`
+    - ...
+port-forward:     # project-only: forwards for `codebox port-forward`
+  - ...
+```
+
+Flag entries are written **without** the leading `--`. A boolean flag is
+just its name; a flag that takes a value uses `name=value`:
+
+```yaml
+args:
+  create:
+    - claude          # becomes --claude
+    - python=3.14     # becomes --python=3.14
+```
+
+## `args.all` — flags for every command
+
+Entries under `args.all` are prepended before the subcommand, so they
+apply to *every* `codebox` invocation. This is the right place for the
+three root-level persistent flags — `--orchestrator`, `--remote`, and
+`--instance-key`.
+
+For example, to always talk to Docker instead of the default Podman, and
+to always drive a remote host:
+
+```yaml
+# ~/.codebox.conf
+args:
+  all:
+    - orchestrator=docker
+    - remote=me@build-box.internal
+```
+
+With that in place, `codebox list` runs as if you had typed
+`codebox --orchestrator=docker --remote=me@build-box.internal list`.
+
+## `args.create` — flags for `create` and `workflow`
+
+Entries under `args.create` are inserted right after the `create` token.
+The `workflow` command runs `create` internally and exposes the same
+flag set, so `args.create` applies to it too — anything else
+(`shell`, `git`, `port-forward`, …) ignores this section.
+
+This is where you pin the toolchain and agents a project's sandboxes
+should always have:
+
+```yaml
+# ./.codebox.conf in a project that needs Node + Claude
+args:
+  create:
+    - os=debian_13
+    - node=25
+    - claude
+    - claude-credentials
+```
+
+Now a bare `codebox create demo` provisions the instance as though you
+had written every flag out:
+
+```sh
+codebox create demo
+# == codebox create demo --os=debian_13 --node=25 --claude --claude-credentials
+```
+
+and the `workflow` shortcut inherits the same setup:
+
+```sh
+codebox workflow origin/main:issue-1234   # create + git push + shell, fully configured
+```
+
+See [`command.md`](command.md) for the complete list of `create` flags
+(`--python`, `--golang`, `--dotnet`, `--codex`, `--podman`, `--tmux`, …)
+and their accepted values.
+
+## `port-forward` — forwards for `codebox port-forward`
+
+The `port-forward` key lists the forwards that `codebox port-forward`
+holds open. Each entry is `LOCAL:REMOTE`; a bare `PORT` maps that port to
+itself (`PORT:PORT`):
+
+```yaml
+# ./.codebox.conf
+port-forward:
+  - 13000:3000     # localhost:13000 -> 3000 in the instance
+  - 13001:3001
+  - 8080           # localhost:8080  -> 8080 in the instance
+```
+
+```sh
+codebox port-forward demo    # hold these forwards open until Ctrl-C
+```
+
+This key is **project-only**: a `port-forward:` list in the global
+`~/.codebox.conf` is ignored, since forwards are inherently
+per-project. When the project config has no `port-forward:` list and a
+compose file is present in the current directory, `codebox port-forward`
+auto-detects the compose services' published ports instead — see the
+[`codebox port-forward`](command.md) reference for the auto-detection
+rules.
+
+## Precedence
+
+When the same flag could come from more than one place, the most
+specific source wins:
+
+```
+explicit CLI flag  >  project .codebox.conf  >  global ~/.codebox.conf
+```
+
+- **CLI overrides config.** A flag you type on the command line is never
+  overridden or duplicated by a config entry. `codebox create demo --node=24`
+  uses Node 24 even if `args.create` pins `node=25`.
+- **Project overrides global.** When both config files set the same flag,
+  the project value replaces the global one (matched by flag name, so
+  `node=25` in the project beats `node=24` in the global file).
+- **Otherwise they merge.** Flags set in only one file are all applied.
+
+## A complete example
+
+A global file with your cross-project defaults:
+
+```yaml
+# ~/.codebox.conf
+args:
+  all:
+    - orchestrator=docker
+  create:
+    - claude
+    - claude-credentials
+```
+
+A project file that adds a toolchain and declares its forwards:
+
+```yaml
+# ./.codebox.conf
+args:
+  create:
+    - node=25
+    - psql
+port-forward:
+  - 3000
+  - 5432
+```
+
+With both in place:
+
+```sh
+codebox create demo
+# == codebox --orchestrator=docker create demo \
+#      --claude --claude-credentials --node=25 --psql
+
+codebox port-forward demo
+# forwards localhost:3000 -> 3000 and localhost:5432 -> 5432
+```

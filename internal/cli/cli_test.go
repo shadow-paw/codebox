@@ -104,6 +104,7 @@ func TestRun_SubcommandHelpFormsAreIdentical(t *testing.T) {
 		"delete",
 		"list",
 		"shell",
+		"port-forward",
 		"exec",
 		"file",
 		"git",

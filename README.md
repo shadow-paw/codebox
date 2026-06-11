@@ -78,8 +78,25 @@ codebox delete issue-1234                       # stop and remove the sandbox
 ```
 > HINT: You can run multiple sandboxes at the same time.
 
+To reach services running inside a sandbox, declare the forwards in the
+project `.codebox.conf` (`local:remote`, or a bare port for `port:port`):
+```yaml
+port-forward:
+  - 13000:3000
+  - 13001:3001
+```
+```sh
+codebox port-forward demo                       # hold the forwards open until Ctrl-C
+```
+When there is no `port-forward:` list but a compose file is present
+(`compose.yaml`, `compose.yml`, `docker-compose.yaml`,
+`docker-compose.yml`, `podman-compose.yaml`, or `podman-compose.yml`),
+the command auto-detects the compose services' published ports and
+forwards each to itself.
+
 
 For the full picture:
 
 - [`doc/command.md`](doc/command.md) — CLI reference: invocation, subcommands, flags, defaults, exit codes.
+- [`doc/config.md`](doc/config.md) — the global and project `.codebox.conf` files, with examples.
 - [`doc/git.md`](doc/git.md) — the clone-push-shell-commit-pull workflow with worked examples.

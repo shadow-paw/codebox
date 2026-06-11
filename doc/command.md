@@ -140,6 +140,68 @@ codebox shell demo \
 | `--instance-key` | path      | *(auto)*  | SSH key for logging into the instance. |
 | `--port`         | `L:R` (repeatable) | *(none)* | Forward `LOCAL:REMOTE` for the lifetime of the shell. Repeat for multiple forwards. |
 
+### `codebox port-forward INSTANCE`
+
+Forward TCP ports from localhost to a sandbox instance and hold them
+open until interrupted, **without** opening a shell. Unlike `shell`'s
+`--port`, the set of forwards is read from configuration rather than
+flags, so the same mapping is reused every time.
+
+The forwards come from the `port-forward:` list in the **project**
+`.codebox.conf` (the file in the current directory; a `port-forward:`
+entry in the global `~/.codebox.conf` is ignored, since forwards are
+inherently per-project). Each entry is `LOCAL:REMOTE`; a bare `PORT`
+maps that port to itself (`PORT:PORT`):
+
+```yaml
+port-forward:
+  - 13000:3000     # localhost:13000 -> 3000 in the instance
+  - 13001:3001
+  - 8080           # localhost:8080  -> 8080 in the instance
+```
+
+When the project config has no `port-forward:` list **and** a
+compose file is present in the current directory (one of
+`compose.yaml`, `compose.yml`, `docker-compose.yaml`,
+`docker-compose.yml`, `podman-compose.yaml`, `podman-compose.yml`, in
+that order), the command falls back to **auto mode**:
+it parses the compose file, collects each service's published
+(host-side) port, and forwards each one to itself. This maps
+`localhost:PORT` to the same `PORT` the container publishes inside the
+instance — its "external" port. Short (`8080:80`, `127.0.0.1:8080:80`,
+`3000`, `3000-3002:3000-3002`, optionally `/tcp`|`/udp`) and long
+(`target:`/`published:`) port forms are both understood; ranges expand
+to one forward per port.
+
+When neither source yields a port, the command fails with
+`no ports to forward: ...` before contacting the orchestrator.
+
+On success the mapped ports are printed and the command blocks until
+`Ctrl-C` (or `SIGTERM`), which it reports as a clean shutdown:
+
+```
+codebox port-forward demo \
+  --orchestrator=podman --remote=user@host --instance-key=~/.ssh/id_rsa
+```
+```
+Forwarding ports to instance demo:
+  localhost:13000 -> 3000
+  localhost:13001 -> 3001
+Press Ctrl-C to stop.
+```
+
+| Flag             | Type   | Default   | Description |
+| ---------------- | ------ | --------- | ----------- |
+| `--orchestrator` | enum   | `podman`  | Container orchestrator (`podman`, `docker`). |
+| `--remote`       | string | *(local)* | Target a remote host (`user@host`). |
+| `--instance-key` | path   | *(auto)*  | SSH key for logging into the instance. |
+
+Positional arguments:
+
+| Argument   | Required | Description |
+| ---------- | -------- | ----------- |
+| `INSTANCE` | yes      | Name of the target instance. |
+
 ### `codebox exec INSTANCE -- COMMAND [ARGS...]`
 
 Execute a command inside a sandbox instance and exit with the command's
@@ -793,6 +855,50 @@ Connection-level ssh failures (exit status 255) bubble up as
 `ssh: could not connect to <host>` so the operator can distinguish
 them from a non-zero exit from the in-container shell.
 
+## `port-forward` port forwarding
+
+`port-forward` is fully wired today. Port resolution happens in the CLI
+layer before the use-case runs:
+
+1. **Resolve forwards.** The project `.codebox.conf` is read. When it
+   carries a `port-forward:` list, each entry is normalised to
+   `LOCAL:REMOTE` (a bare `PORT` becomes `PORT:PORT`), validated as a
+   port number, and de-duplicated. Otherwise, if a compose file
+   is present in the current directory, its published ports are
+   detected and mapped to themselves, ordered by service name then
+   listing order. An empty result fails with `no ports to forward: ...`
+   before any orchestrator call.
+
+The use-case layer then mirrors `shell`'s preflight:
+
+2. **Existence check.** `<engine> ps -a --format '{{.Names}}'` against
+   `--remote` (locally if unset); a missing instance fails with
+   `instance "NAME" not found`.
+3. **Host port lookup.** `<engine> port NAME 2222`; a stopped container
+   surfaces `instance "NAME" is not exposing port 2222; is it running?`.
+4. **Forwarding ssh.** A locally-exec'd `ssh -N` (no remote command, so
+   no usable shell) opens the `-L` forwards and blocks. The command
+   shape is:
+
+   - **Local** (no `--remote`):
+     `ssh -N -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 [-i KEY] [-L L:localhost:R ...] user@localhost -p PORT`
+   - **Remote** (`--remote=ops@bastion`):
+     `ssh -N ... [-L L:localhost:R ...] -J ops@bastion user@localhost -p PORT`
+
+   As with `shell`, `--instance-key` is `~`-expanded and passed as `-i`
+   only to this hop, and each forward targets `localhost:R` so the
+   remote end resolves on the container side of any `-J` jump.
+   `ExitOnForwardFailure=yes` makes ssh fail loudly when a local port is
+   already taken rather than connecting with a silently-dropped forward;
+   `ServerAliveInterval=30` keeps the otherwise-idle session from being
+   dropped.
+
+The mapped ports are printed before the connection blocks (since
+`ssh -N` is itself silent). `Ctrl-C`/`SIGTERM` cancels the context,
+which kills ssh; that is treated as a clean shutdown (the command prints
+`Stopped port forwarding.` and exits successfully) rather than a
+connection error.
+
 ## `exec` command execution
 
 `exec` is fully wired today. The use-case layer performs, in order:
@@ -995,8 +1101,8 @@ INSTANCE positional arguments.
 ### Instance-name candidates
 
 Subcommands whose first positional is `INSTANCE` — `delete`, `shell`,
-`exec`, `file pull`, `file push`, `git push`, `git pull`, `mount`,
-`umount` — surface live instance names to the shell. At each tab press the completion path runs a
+`port-forward`, `exec`, `file pull`, `file push`, `git push`,
+`git pull`, `mount`, `umount` — surface live instance names to the shell. At each tab press the completion path runs a
 single orchestrator query:
 
 ```
@@ -1041,8 +1147,9 @@ arguments the suppression is cancelled, so every help path
 
 ## Status
 
-`create`, `delete`, `list`, `shell`, `exec`, `file push` / `file pull`,
-`git push` / `git pull`, `mount` / `umount`, `workflow`, and
-`completion` are all implemented end-to-end. The behaviours described above are the
+`create`, `delete`, `list`, `shell`, `port-forward`, `exec`,
+`file push` / `file pull`, `git push` / `git pull`, `mount` / `umount`,
+`workflow`, and `completion` are all implemented end-to-end. The
+behaviours described above are the
 **specification** the implementation is held against — if the two
 disagree, this file is canonical and the code should be updated.

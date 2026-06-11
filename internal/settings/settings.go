@@ -16,6 +16,13 @@ type Config struct {
 		All    []string `yaml:"all"`
 		Create []string `yaml:"create"`
 	} `yaml:"args"`
+
+	// PortForward lists the forwards `codebox port-forward` sets up,
+	// each a "LOCAL:REMOTE" string (a bare "PORT" maps a port to
+	// itself). It is read from the project config only — a global
+	// .codebox.conf entry is ignored, since forwards are inherently
+	// per-project. See ResolvePortForwards.
+	PortForward []string `yaml:"port-forward"`
 }
 
 // Load reads ~/.codebox.conf (global) and ./.codebox.conf (project).

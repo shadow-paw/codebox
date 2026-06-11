@@ -47,6 +47,7 @@ func newRootCmd() *cobra.Command {
 		newDeleteCmd(),
 		newListCmd(),
 		newShellCmd(),
+		newPortForwardCmd(),
 		newExecCmd(),
 		newFileCmd(),
 		newGitCmd(),
