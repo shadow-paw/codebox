@@ -295,15 +295,46 @@ func TestDelete_RemoveFailureSurfacedAndUntagSkipped(t *testing.T) {
 	}
 }
 
-func TestDelete_UntagFailureSurfaced(t *testing.T) {
+func TestDelete_UntagImageNotKnown_ProceedsToRemote(t *testing.T) {
 	t.Parallel()
-	a, _ := newApp(t,
+	a, fr := newApp(t,
 		&stubKeys{key: "k"},
 		reply{stdout: "demo\n"}, // ps -a
 		reply{stdout: ""},       // cat /proc/mounts
 		reply{},                 // ps — not running
 		reply{},                 // rm
-		reply{stderr: "Error: image not known\n", err: &exec.ExitError{}}, // untag fails
+		reply{stderr: "Error: image not known\n", err: &exec.ExitError{}}, // untag — image already gone
+		reply{err: &exec.ExitError{}},                                     // git remote get-url — absent
+	)
+
+	var out bytes.Buffer
+	err := a.Delete(context.Background(), &out, app.DeleteRequest{
+		Instance:     "demo",
+		Orchestrator: "podman",
+	})
+	if err != nil {
+		t.Fatalf("a missing image should be tolerated, got: %v", err)
+	}
+	if got := len(fr.calls); got != 6 {
+		t.Fatalf("expected 6 calls (untag failure must not abort before git remote), got %d: %+v", got, fr.calls)
+	}
+	if !strings.Contains(fr.calls[5].cmd, "git remote get-url 'codebox-demo'") {
+		t.Errorf("call[5] should attempt git remote cleanup, got %q", fr.calls[5].cmd)
+	}
+	if !strings.Contains(out.String(), "already gone") {
+		t.Errorf("expected a skip-untag note, got:\n%s", out.String())
+	}
+}
+
+func TestDelete_UntagFailureSurfaced(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: "demo\n"}, // ps -a
+		reply{stdout: ""},       // cat /proc/mounts
+		reply{},                 // ps — not running
+		reply{},                 // rm
+		reply{stderr: "Error: image is in use by a container\n", err: &exec.ExitError{}}, // untag fails
 	)
 
 	err := a.Delete(context.Background(), &bytes.Buffer{}, app.DeleteRequest{
@@ -313,8 +344,12 @@ func TestDelete_UntagFailureSurfaced(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when untag fails")
 	}
-	if !strings.Contains(err.Error(), "untag image") || !strings.Contains(err.Error(), "not known") {
+	if !strings.Contains(err.Error(), "untag image") || !strings.Contains(err.Error(), "in use") {
 		t.Errorf("untag error should include op + stderr; got %v", err)
+	}
+	// A genuine untag failure must abort before touching the git remote.
+	if got := len(fr.calls); got != 5 {
+		t.Fatalf("expected 5 calls (abort at untag), got %d: %+v", got, fr.calls)
 	}
 }
 
