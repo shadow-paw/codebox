@@ -51,6 +51,11 @@ func newWorkflowCmd() *cobra.Command {
 			"  local_branch:target_branch\n" +
 			"      e.g. `main:issue-1234`. The local branch is pushed\n" +
 			"      straight into the instance with no upstream fetch.\n\n" +
+			"When `git.push-from` is set in the project's .codebox.conf the source\n" +
+			"may be omitted — pass just `target_branch` (or `:target_branch`)\n" +
+			"and the configured source is filled in, so `codebox workflow\n" +
+			"issue-1234` with `git.push-from: origin/main` means\n" +
+			"`codebox workflow origin/main:issue-1234`.\n\n" +
 			"target_branch doubles as the new instance name and as the branch\n" +
 			"checked out at ~/source inside the sandbox. workflow is a shortcut\n" +
 			"for:\n\n" +
@@ -143,11 +148,16 @@ func runWorkflow(
 	if err != nil {
 		return fmt.Errorf("locate home directory: %w", err)
 	}
+	pushSource, err := projectPushSource(home)
+	if err != nil {
+		return err
+	}
 	return app.New(home).Workflow(ctx, stdin, stdout, stderr, app.WorkflowRequest{
 		Orchestrator:        opts.orchestrator,
 		Remote:              opts.remote,
 		InstanceKey:         opts.instanceKey,
 		Refspec:             opts.refspec,
+		PushSource:          pushSource,
 		OS:                  opts.osImage,
 		Rebuild:             opts.rebuild,
 		HTTPSProxy:          opts.httpsProxy,

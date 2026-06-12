@@ -180,6 +180,158 @@ func TestGitPush_Remote(t *testing.T) {
 	}
 }
 
+// TestResolveRefspec covers the source-omission rules: an absent source
+// side is filled from the configured git.push-from default, an already-
+// present source is left untouched, and an omitted source with no
+// default is a clear error.
+func TestResolveRefspec(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		refspec string
+		push    string
+		want    string
+		wantErr string
+	}{
+		{
+			name:    "bare target uses push default",
+			refspec: "issue-1234",
+			push:    "origin/main",
+			want:    "origin/main:issue-1234",
+		},
+		{
+			name:    "leading colon uses push default",
+			refspec: ":issue-1234",
+			push:    "origin/main",
+			want:    "origin/main:issue-1234",
+		},
+		{
+			name:    "local branch push default",
+			refspec: "work",
+			push:    "main",
+			want:    "main:work",
+		},
+		{
+			name:    "explicit source left untouched even with push set",
+			refspec: "upstream/dev:work",
+			push:    "origin/main",
+			want:    "upstream/dev:work",
+		},
+		{
+			name:    "explicit local source left untouched",
+			refspec: "main:work",
+			push:    "origin/main",
+			want:    "main:work",
+		},
+		{
+			name:    "bare target without push default errors",
+			refspec: "issue-1234",
+			push:    "",
+			wantErr: "no git.push-from default",
+		},
+		{
+			name:    "leading colon without push default errors",
+			refspec: ":issue-1234",
+			push:    "",
+			wantErr: "no git.push-from default",
+		},
+		{
+			name:    "empty refspec errors",
+			refspec: "",
+			push:    "origin/main",
+			wantErr: "refspec is required",
+		},
+		{
+			name:    "lone colon errors",
+			refspec: ":",
+			push:    "origin/main",
+			wantErr: "refspec is required",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := app.ResolveRefspecForTest(tc.refspec, tc.push)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("resolveRefspec(%q, %q) error = %v, want containing %q",
+						tc.refspec, tc.push, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveRefspec(%q, %q): unexpected error %v",
+					tc.refspec, tc.push, err)
+			}
+			if got != tc.want {
+				t.Errorf("resolveRefspec(%q, %q) = %q, want %q",
+					tc.refspec, tc.push, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestGitPush_OmittedSourceUsesPushDefault pins that a refspec with no
+// source side adopts the request's PushSource: the local fetch targets
+// the configured remote and the push left-hand side is the resolved
+// source/branch.
+func TestGitPush_OmittedSourceUsesPushDefault(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: "demo\n"},          // 0  ps -a — exists
+		reply{stdout: "0.0.0.0:33000\n"}, // 1  port lookup
+		reply{stdout: ""},                // 2  git config user.name
+		reply{stdout: ""},                // 3  git config user.email
+		reply{},                          // 4  ssh init
+		reply{},                          // 5  set-url || add
+		reply{},                          // 6  git fetch source_remote
+		reply{},                          // 7  git push
+		reply{},                          // 8  ssh checkout
+	)
+
+	err := a.GitPush(context.Background(), &bytes.Buffer{}, &bytes.Buffer{},
+		app.GitPushRequest{
+			Instance:     "demo",
+			Orchestrator: "podman",
+			Refspec:      "issue-1234", // bare target, source omitted
+			PushSource:   "origin/main",
+		})
+	if err != nil {
+		t.Fatalf("GitPush: %v", err)
+	}
+	if fr.calls[6].cmd != "git fetch 'origin'" {
+		t.Errorf("local fetch should target configured push remote, got %q",
+			fr.calls[6].cmd)
+	}
+	wantPush := "GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=no' " +
+		"git push 'codebox-demo' 'origin/main:refs/heads/issue-1234'"
+	if fr.calls[7].cmd != wantPush {
+		t.Errorf("push refspec mismatch:\n got: %q\nwant: %q", fr.calls[7].cmd, wantPush)
+	}
+}
+
+// TestGitPush_OmittedSourceWithoutPushDefault pins that omitting the
+// source with no PushSource configured fails before any runner call.
+func TestGitPush_OmittedSourceWithoutPushDefault(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t, &stubKeys{key: "k"})
+	err := a.GitPush(context.Background(), &bytes.Buffer{}, &bytes.Buffer{},
+		app.GitPushRequest{
+			Instance:     "demo",
+			Orchestrator: "podman",
+			Refspec:      "issue-1234",
+		})
+	if err == nil || !strings.Contains(err.Error(), "git.push-from") {
+		t.Fatalf("expected git.push-from error, got %v", err)
+	}
+	if len(fr.calls) != 0 {
+		t.Errorf("runner should not be invoked when source is unresolved, got %d calls",
+			len(fr.calls))
+	}
+}
+
 func TestGitPush_RejectsBadRefspec(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{

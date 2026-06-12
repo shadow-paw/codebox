@@ -12,6 +12,13 @@ func SetClaudeCredentialsRetryDelayForTest(d time.Duration) (restore func()) {
 	return func() { claudeCredentialsRetryDelay = prev }
 }
 
+// ResolveRefspecForTest exposes resolveRefspec so the source-omission
+// rules (filling an absent refspec source from the configured git.push-from
+// default) can be unit-tested directly.
+func ResolveRefspecForTest(refspec, pushSource string) (string, error) {
+	return resolveRefspec(refspec, pushSource)
+}
+
 // SetStartCheckBackoffForTest swaps the backoff schedule used by the
 // post-run "is the container actually running?" poll, returning a
 // restore function. Tests pass a slice of zero durations to exercise

@@ -119,6 +119,35 @@ remote form (`feature/x:work` would be read as remote `feature`,
 branch `x`). To push such a branch, either configure a remote first
 or rename the branch locally before pushing.
 
+### Omitting the source: `git.push-from`
+
+When a project always starts sandboxes from the same upstream, set the
+source once in the project's `.codebox.conf` and leave it off the
+command line:
+
+```yaml
+# ./.codebox.conf
+git:
+  push-from: origin/main
+```
+
+The source side of the refspec then becomes optional. Give just the
+`target_branch` (or `:target_branch`) and the configured source is
+filled in; dropping the refspec from `git push` entirely targets a
+branch named after the instance:
+
+```sh
+codebox git push instance_name issue-1234   # == … origin/main:issue-1234
+codebox git push instance_name :hotfix       # == … origin/main:hotfix
+codebox git push instance_name               # == … origin/main:instance_name
+codebox workflow issue-1234                   # == codebox workflow origin/main:issue-1234
+```
+
+A refspec that already names its own source is used as-is. With no
+`git.push-from` configured, omitting the source is an error that asks for an
+explicit one. See [`config.md`](config.md#gitpush-from--default-push-source-for-workflow-and-git-push)
+for the full description.
+
 ## Restarted containers
 
 The host-side port a sandbox publishes can change when the container

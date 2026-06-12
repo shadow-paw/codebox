@@ -296,7 +296,7 @@ codebox file push demo \
 | `--local-path`    | path   | *(unset)* | File or directory on the local machine to copy from. |
 | `--instance-path` | path   | *(unset)* | Directory on the instance to copy into. |
 
-### `codebox git push INSTANCE REFSPEC`
+### `codebox git push INSTANCE [REFSPEC]`
 
 Push a ref from the operator's repo into a sandbox instance and check
 the resulting branch out at `~/source` inside the container. One
@@ -322,7 +322,7 @@ Positional arguments:
 | Argument | Required | Description |
 | -------- | -------- | ----------- |
 | `INSTANCE` | yes | Name of the target sandbox instance. |
-| `REFSPEC`  | yes | One of two shapes (see below); `target_branch` is the branch name created on the instance and checked out at `~/source`. |
+| `REFSPEC`  | no  | One of two shapes (see below); `target_branch` is the branch name created on the instance and checked out at `~/source`. Optional when `git.push-from` is set in `.codebox.conf`. |
 
 `REFSPEC` is either:
 
@@ -332,6 +332,12 @@ Positional arguments:
 - `local_branch:target_branch` — no slash before the `:`. codebox
   skips the local fetch and pushes the named local branch directly,
   so this form works in repos with no remote configured.
+
+When `git.push-from` is set in the project's `.codebox.conf` the source side
+may be omitted: pass just `target_branch` (or `:target_branch`), or drop
+`REFSPEC` entirely to target a branch named after `INSTANCE`. The
+configured source is filled in — see
+[Configuration](config.md#gitpush-from--default-push-source-for-workflow-and-git-push).
 
 ### `codebox git pull INSTANCE [BRANCH]`
 
@@ -491,7 +497,14 @@ codebox workflow origin/main:issue-1234 \
   --os=debian_13 --node=24 --claude --tmux
 
 codebox workflow main:issue-1234          # local branch, no upstream fetch
+
+codebox workflow issue-1234               # source from git.push-from in .codebox.conf
 ```
+
+When `git.push-from` is set in the project's `.codebox.conf`, the source side
+may be omitted — pass just the `target_branch` (or `:target_branch`) and
+the configured source is filled in. See
+[Configuration](config.md#gitpush-from--default-push-source-for-workflow-and-git-push).
 
 `workflow` is exactly equivalent to running, in order:
 

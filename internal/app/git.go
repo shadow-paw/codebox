@@ -29,6 +29,11 @@ type GitPushRequest struct {
 	Remote       string
 	InstanceKey  string
 	Refspec      string
+
+	// PushSource is the project-configured default source (git.push-from
+	// in .codebox.conf). It fills in the source side of Refspec when the
+	// operator omits it — see resolveRefspec. Empty when unconfigured.
+	PushSource string
 }
 
 // GitPullRequest is the use-case input for App.GitPull. Branch is the
@@ -76,7 +81,11 @@ func (a *App) GitPush(ctx context.Context, stdout, stderr io.Writer, req GitPush
 	if err := validateInstanceName(req.Instance); err != nil {
 		return err
 	}
-	sourceRemote, sourceBranch, targetBranch, err := parsePushRefspec(req.Refspec)
+	refspec, err := resolveRefspec(req.Refspec, req.PushSource)
+	if err != nil {
+		return err
+	}
+	sourceRemote, sourceBranch, targetBranch, err := parsePushRefspec(refspec)
 	if err != nil {
 		return err
 	}
@@ -151,6 +160,41 @@ func (a *App) GitPush(ctx context.Context, stdout, stderr io.Writer, req GitPush
 		"Repository cloned to instance %q at ~/%s (branch %q).\n",
 		req.Instance, instanceSourceDir, targetBranch)
 	return nil
+}
+
+// resolveRefspec fills in an omitted source side from the project's
+// configured default (git.push-from). A refspec whose source — the part
+// before the colon — is missing adopts pushSource, yielding
+// `pushSource:target`. The source is "omitted" in two spellings:
+//
+//   - `:target` — an explicit empty source.
+//   - `target` — a bare branch with no colon at all.
+//
+// When the source is already present the refspec is returned unchanged
+// (and parsePushRefspec validates it as before). An omitted source with
+// no configured default is an error that names the missing git.push-from.
+func resolveRefspec(refspec, pushSource string) (string, error) {
+	src, dst, hasColon := strings.Cut(refspec, ":")
+	if hasColon && src != "" {
+		return refspec, nil // source present — leave it untouched
+	}
+	target := src // bare "target" form
+	if hasColon {
+		target = dst // ":target" form
+	}
+	if target == "" {
+		return "", errors.New(
+			"refspec is required (use 'local_branch:target_branch'," +
+				" 'source_remote/source_branch:target_branch', or set" +
+				" git.push-from in .codebox.conf and pass just the target_branch)")
+	}
+	if pushSource == "" {
+		return "", fmt.Errorf(
+			"refspec %q omits the source branch but no git.push-from default"+
+				" is set in .codebox.conf; pass an explicit source"+
+				" (e.g. 'origin/main:%s')", refspec, target)
+	}
+	return pushSource + ":" + target, nil
 }
 
 // parsePushRefspec breaks the refspec into its components. Two forms

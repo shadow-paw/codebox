@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"codebox/internal/app"
+	"codebox/internal/settings"
 )
 
 func newGitCmd() *cobra.Command {
@@ -33,7 +34,7 @@ func newGitCmd() *cobra.Command {
 
 func newGitPushCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "push INSTANCE REFSPEC",
+		Use:   "push INSTANCE [REFSPEC]",
 		Short: "Push a ref from the operator's repo into a sandbox instance",
 		Long: "Push a ref from the operator's repo into a sandbox instance.\n\n" +
 			"REFSPEC takes one of two shapes:\n\n" +
@@ -46,13 +47,22 @@ func newGitPushCmd() *cobra.Command {
 			"      e.g. `main:issue-1234`. No source remote and no local fetch;\n" +
 			"      the named local branch is pushed straight to\n" +
 			"      refs/heads/target_branch on the instance.\n\n" +
-			"In both forms target_branch is checked out at ~/source inside\n" +
+			"The source side may be omitted when `git.push-from` is set in the\n" +
+			"project's .codebox.conf: write `:target_branch` (or, with REFSPEC\n" +
+			"left off entirely, just `codebox git push INSTANCE`, which targets\n" +
+			"a branch named after the instance) and the configured source is\n" +
+			"filled in.\n\n" +
+			"In every form target_branch is checked out at ~/source inside\n" +
 			"the sandbox after the push.",
-		Args:              cobra.ExactArgs(2),
+		Args:              cobra.RangeArgs(1, 2),
 		ValidArgsFunction: completeInstances,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			refspec := ""
+			if len(args) > 1 {
+				refspec = args[1]
+			}
 			return runGitPush(cmd.Context(),
-				cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], args[1], readCommonOpts(cmd))
+				cmd.OutOrStdout(), cmd.ErrOrStderr(), args[0], refspec, readCommonOpts(cmd))
 		},
 	}
 	cmd.Flags().SortFlags = false
@@ -97,12 +107,23 @@ func runGitPush(
 	if err := requireGitCwd(); err != nil {
 		return err
 	}
+	pushSource, err := projectPushSource(home)
+	if err != nil {
+		return err
+	}
+	// A bare `git push INSTANCE` (no refspec) pushes to a branch named
+	// after the instance — the same convention as `git pull` and
+	// `workflow` — with the source taken from git.push-from.
+	if refspec == "" {
+		refspec = instance
+	}
 	return app.New(home).GitPush(ctx, stdout, stderr, app.GitPushRequest{
 		Instance:     instance,
 		Orchestrator: opts.orchestrator,
 		Remote:       opts.remote,
 		InstanceKey:  opts.instanceKey,
 		Refspec:      refspec,
+		PushSource:   pushSource,
 	})
 }
 
@@ -126,6 +147,24 @@ func runGitPull(
 		InstanceKey:  opts.instanceKey,
 		Branch:       branch,
 	})
+}
+
+// projectPushSource returns the `git.push-from` default from the project's
+// .codebox.conf (the working directory's config; the global file is
+// ignored, matching port-forward). It is the source side filled into a
+// push refspec when the operator omits it. An empty string means no
+// default is configured — the callers turn that into a clear error only
+// if the operator actually omitted the source.
+func projectPushSource(home string) (string, error) {
+	workDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("locate current directory: %w", err)
+	}
+	_, project, err := settings.Load(home, workDir)
+	if err != nil {
+		return "", err
+	}
+	return project.Git.Push, nil
 }
 
 // requireGitCwd confirms the operator's current working directory is

@@ -22,6 +22,11 @@ type WorkflowRequest struct {
 	InstanceKey  string
 	Refspec      string
 
+	// PushSource is the project-configured default source (git.push-from
+	// in .codebox.conf), used to fill in an omitted refspec source —
+	// see resolveRefspec.
+	PushSource string
+
 	OS         string
 	Rebuild    bool
 	HTTPSProxy string
@@ -53,7 +58,11 @@ func (a *App) Workflow(
 	stdout, stderr io.Writer,
 	req WorkflowRequest,
 ) error {
-	_, _, targetBranch, err := parsePushRefspec(req.Refspec)
+	refspec, err := resolveRefspec(req.Refspec, req.PushSource)
+	if err != nil {
+		return err
+	}
+	_, _, targetBranch, err := parsePushRefspec(refspec)
 	if err != nil {
 		return err
 	}
@@ -94,7 +103,9 @@ func (a *App) Workflow(
 		Orchestrator: req.Orchestrator,
 		Remote:       req.Remote,
 		InstanceKey:  req.InstanceKey,
-		Refspec:      req.Refspec,
+		// refspec is already fully resolved (source filled in), so no
+		// PushSource is needed here — GitPush leaves it untouched.
+		Refspec: refspec,
 	}); err != nil {
 		return err
 	}

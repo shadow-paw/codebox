@@ -135,6 +135,76 @@ func TestWorkflow_ChainsCreateThenGitPushThenShell(t *testing.T) {
 	}
 }
 
+// TestWorkflow_OmittedSourceUsesPushDefault pins that a workflow whose
+// refspec carries only the target branch adopts the request's
+// PushSource: the target doubles as the instance name and the push
+// fetches from / pushes the configured source.
+func TestWorkflow_OmittedSourceUsesPushDefault(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t, &stubKeys{key: "ssh-ed25519 AAAA test"},
+		// --- Create ---
+		reply{stdout: "other\n"},  // ps -a — no collision
+		reply{},                   // build
+		reply{stdout: "abc123\n"}, // run
+		reply{stdout: "demo\n"},   // running check
+		// --- GitPush ---
+		reply{stdout: "demo\n"},          // ps -a — exists
+		reply{stdout: "0.0.0.0:33000\n"}, // port lookup
+		reply{},                          // ssh init script
+		reply{},                          // git remote set-url
+		reply{stdout: ""},                // git config user.name
+		reply{stdout: ""},                // git config user.email
+		reply{},                          // git fetch
+		reply{},                          // git push
+		reply{},                          // ssh checkout
+		// --- Shell ---
+		reply{stdout: "demo\n"},          // ps -a — exists
+		reply{stdout: ""},                // tmux label — disabled
+		reply{stdout: "0.0.0.0:33000\n"}, // port lookup
+		reply{},                          // interactive ssh
+	)
+
+	err := a.Workflow(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{},
+		app.WorkflowRequest{
+			Orchestrator: "podman",
+			Refspec:      "demo", // bare target, source omitted
+			PushSource:   "origin/main",
+			OS:           "debian_13",
+		})
+	if err != nil {
+		t.Fatalf("Workflow: %v", err)
+	}
+	joined := joinCmds(fr.calls)
+	for _, want := range []string{
+		"git fetch 'origin'",
+		"git push 'codebox-demo' 'origin/main:refs/heads/demo'",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("workflow trace missing %q\nall calls:\n%s", want, joined)
+		}
+	}
+}
+
+// TestWorkflow_OmittedSourceWithoutPushDefault pins that a bare target
+// with no configured PushSource fails before any container command.
+func TestWorkflow_OmittedSourceWithoutPushDefault(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t, &stubKeys{key: "k"})
+	err := a.Workflow(context.Background(),
+		&bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{},
+		app.WorkflowRequest{
+			Orchestrator: "podman",
+			Refspec:      "demo",
+		})
+	if err == nil || !strings.Contains(err.Error(), "git.push-from") {
+		t.Fatalf("expected git.push-from error, got %v", err)
+	}
+	if len(fr.calls) != 0 {
+		t.Errorf("runner must not be invoked when source is unresolved; got %d calls",
+			len(fr.calls))
+	}
+}
+
 func joinCmds(calls []recordedCall) string {
 	var b strings.Builder
 	for _, c := range calls {

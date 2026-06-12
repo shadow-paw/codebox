@@ -202,6 +202,26 @@ args:
 	}
 }
 
+func TestLoadGitPush(t *testing.T) {
+	dir := t.TempDir()
+
+	yaml := `
+git:
+  push-from: origin/main
+`
+	if err := os.WriteFile(filepath.Join(dir, ".codebox.conf"), []byte(yaml), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var cfg Config
+	if err := loadFile(filepath.Join(dir, ".codebox.conf"), &cfg); err != nil {
+		t.Fatalf("loadFile: %v", err)
+	}
+	if cfg.Git.Push != "origin/main" {
+		t.Errorf("Git.Push = %q, want %q", cfg.Git.Push, "origin/main")
+	}
+}
+
 func TestLoadMissingFilesOK(t *testing.T) {
 	global, project, err := Load("/nonexistent-home", "/nonexistent-work")
 	if err != nil {

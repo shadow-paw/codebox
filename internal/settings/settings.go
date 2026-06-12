@@ -23,6 +23,18 @@ type Config struct {
 	// .codebox.conf entry is ignored, since forwards are inherently
 	// per-project. See ResolvePortForwards.
 	PortForward []string `yaml:"port-forward"`
+
+	// Git holds project-level git defaults.
+	Git struct {
+		// Push is the default source side of a push refspec — a
+		// "remote/branch" (e.g. "origin/main") or a local "branch" —
+		// used by `codebox workflow` and `codebox git push` when the
+		// operator omits the source. With `push-from: origin/main`,
+		// `codebox workflow issue-1234` behaves like
+		// `codebox workflow origin/main:issue-1234`. Read from the
+		// project config only, like PortForward.
+		Push string `yaml:"push-from"`
+	} `yaml:"git"`
 }
 
 // Load reads ~/.codebox.conf (global) and ./.codebox.conf (project).

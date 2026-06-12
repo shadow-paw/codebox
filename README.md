@@ -68,10 +68,12 @@ args:
     - python=3.14
     - claude
     - claude-credentials
+git:
+  push-from: origin/main
 ```
 then use the `workflow` shortcut:
 ```sh
-codebox workflow origin/main:issue-1234         # create, git push, and shell in one command
+codebox workflow issue-1234                     # create, git push, and shell in one command
 # inside the sandbox: let Claude (or you) write the commits
 codebox git pull issue-1234                     # branch defaults to the instance name
 codebox delete issue-1234                       # stop and remove the sandbox

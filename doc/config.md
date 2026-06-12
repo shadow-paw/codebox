@@ -21,7 +21,7 @@ need. When both exist they are merged (see [Precedence](#precedence)).
 
 ## File format
 
-A config file has up to three top-level keys:
+A config file has up to four top-level keys:
 
 ```yaml
 args:
@@ -31,6 +31,8 @@ args:
     - ...
 port-forward:     # project-only: forwards for `codebox port-forward`
   - ...
+git:
+  push-from: ...  # project-only: default push source for workflow / git push
 ```
 
 Flag entries are written **without** the leading `--`. A boolean flag is
@@ -127,6 +129,38 @@ compose file is present in the current directory, `codebox port-forward`
 auto-detects the compose services' published ports instead — see the
 [`codebox port-forward`](command.md) reference for the auto-detection
 rules.
+
+## `git.push-from` — default push source for `workflow` and `git push`
+
+`codebox workflow` and `codebox git push` take a refspec that names a
+source and a target — `source_remote/source_branch:target_branch` (or
+`local_branch:target_branch`). When you always start sandboxes from the
+same upstream, set `git.push-from` to that source side and omit it from the
+command line:
+
+```yaml
+# ./.codebox.conf
+git:
+  push-from: origin/main
+```
+
+With that in place, the source may be left off the refspec — write just
+the `target_branch` (or `:target_branch`) and the configured source is
+filled in:
+
+```sh
+codebox workflow issue-1234        # == codebox workflow origin/main:issue-1234
+codebox git push issue-1234        # == codebox git push issue-1234 origin/main:issue-1234
+codebox git push demo :hotfix      # == codebox git push demo origin/main:hotfix
+```
+
+A refspec that already carries its own source (`upstream/dev:work`,
+`main:work`) is used as-is and ignores `git.push-from`. When the source is
+omitted and no `git.push-from` is configured, the command fails and tells you
+to pass an explicit source.
+
+Like `port-forward`, this key is **project-only**: a `git.push-from` entry in
+the global `~/.codebox.conf` is ignored.
 
 ## Precedence
 
