@@ -114,7 +114,11 @@ restate the legal values for each kind of flag:
 
 ### `codebox delete INSTANCE`
 
-Delete a sandbox instance. The container is stopped and removed.
+Delete a sandbox instance. The container is stopped and removed, and the
+local artifacts codebox created for it are cleaned up: any active sshfs
+mounts are unmounted, the VS Code ssh alias (see
+[`codebox vscode`](#codebox-vscode-instance)) is removed from
+`~/.ssh/codebox_config`, and the instance's git remote is dropped.
 
 ```
 codebox delete demo --orchestrator=podman --remote=user@host
@@ -217,6 +221,72 @@ Forwarding ports to instance demo:
   localhost:13001 -> 3001
 Press Ctrl-C to stop.
 ```
+
+| Flag             | Type   | Default   | Description |
+| ---------------- | ------ | --------- | ----------- |
+| `--orchestrator` | enum   | `podman`  | Container orchestrator (`podman`, `docker`). |
+| `--remote`       | string | *(local)* | Target a remote host (`user@host`). |
+| `--instance-key` | path   | *(auto)*  | SSH key for logging into the instance. |
+
+Positional arguments:
+
+| Argument   | Required | Description |
+| ---------- | -------- | ----------- |
+| `INSTANCE` | yes      | Name of the target instance. |
+
+### `codebox vscode INSTANCE`
+
+Open a sandbox instance's `~/source` in VS Code. The open strategy is
+chosen automatically from where codebox is running:
+
+- **Inside a VS Code SSH-remote terminal** (detected via
+  `TERM_PROGRAM=vscode` together with `SSH_CONNECTION`), where the `code`
+  CLI opens paths on this host's filesystem: the instance's `~/source` is
+  sshfs-mounted onto `.codebox/INSTANCE/` — reusing `codebox mount`, and
+  mounting it first only when that directory is missing or empty (a notice
+  is printed either way) — and `code` is pointed at that local path.
+- **Inside a plain SSH session with no VS Code** (`SSH_CONNECTION` present
+  but `TERM_PROGRAM` is not `vscode`): codebox is on a remote host with no
+  local editor to drive, so the command prints an explanatory message and
+  exits non-zero. Run it from your workstation's terminal or a VS Code
+  Remote-SSH window instead.
+- **Otherwise** (a local VS Code, or a non-VS-Code terminal on your
+  workstation): a Remote-SSH URI targeting the in-container sshd is
+  constructed, the connection string is printed, and `code` is launched to
+  open the instance over SSH. For a direct connection the URI authority is
+  `user@localhost:<host-port>`; for a bastion (`--remote`) it is a managed
+  host alias (see below).
+
+In the mount and Remote-SSH modes, a `*.code-workspace` file in `~/source`
+is opened as a workspace; otherwise the directory is opened.
+
+```
+codebox vscode demo \
+  --orchestrator=podman --remote=ops@bastion --instance-key=~/.ssh/id_rsa
+```
+```
+──────── vscode ─────────────────────────────────────────────
+Opening instance "demo" in VS Code over Remote-SSH:
+  ssh target: codebox-demo
+  uri:        vscode-remote://ssh-remote+codebox-demo/home/user/source
+  proxyjump:  ops@bastion (written to ~/.ssh/codebox_config, included from ~/.ssh/config)
+──────────────────────────────────────────────────────────────
+```
+
+When the instance is reached via a bastion (`--remote`), VS Code's
+Remote-SSH cannot take a `ProxyJump` on the command line, so codebox wires
+one up automatically: it registers a managed host alias `codebox-INSTANCE`
+in `~/.ssh/codebox_config` — carrying `HostName`, `Port`, `User`, the
+`ProxyJump`, and the `IdentityFile` when `--instance-key` is set — and adds
+a one-time `Include codebox_config` line to `~/.ssh/config`. The printed
+URI targets that alias, so the connection traverses the bastion with no
+manual ssh-config edits. The managed file is codebox's own; your
+hand-written hosts in `~/.ssh/config` are left untouched. A direct
+connection (no `--remote`) writes nothing under `~/.ssh`.
+
+`codebox delete INSTANCE` removes the instance's managed alias again; when
+the last alias is gone the `codebox_config` file and its `Include` line are
+removed too.
 
 | Flag             | Type   | Default   | Description |
 | ---------------- | ------ | --------- | ----------- |

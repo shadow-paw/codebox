@@ -519,6 +519,53 @@ func TestDelete_IgnoresUnrelatedMounts(t *testing.T) {
 	}
 }
 
+// TestDelete_RemovesVSCodeSSHAlias pins the contract that tearing down an
+// instance also removes the VS Code ssh alias codebox registered for it:
+// the sole block empties ~/.ssh/codebox_config (so the file and its
+// Include line go away) while the rest of the delete flow is unaffected.
+func TestDelete_RemovesVSCodeSSHAlias(t *testing.T) {
+	home := t.TempDir()
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	frag := "# >>> codebox vscode demo >>>\n" +
+		"Host codebox-demo\n    HostName localhost\n    ProxyJump ops@bastion\n" +
+		"# <<< codebox vscode demo <<<\n"
+	if err := os.WriteFile(filepath.Join(sshDir, "codebox_config"), []byte(frag), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sshDir, "config"),
+		[]byte("Include codebox_config\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	a, _ := newAppWithHome(t, home,
+		&stubKeys{key: "k"},
+		reply{stdout: "demo\n"},       // ps -a — exists
+		reply{stdout: ""},             // cat /proc/mounts — no codebox mounts
+		reply{stdout: ""},             // ps — not running
+		reply{},                       // rm
+		reply{},                       // untag
+		reply{err: &exec.ExitError{}}, // git remote get-url — absent
+	)
+
+	var out bytes.Buffer
+	err := a.Delete(context.Background(), &out, app.DeleteRequest{
+		Instance:     "demo",
+		Orchestrator: "podman",
+	})
+	if err != nil {
+		t.Fatalf("Delete: %v\nout:\n%s", err, out.String())
+	}
+	if _, statErr := os.Stat(filepath.Join(sshDir, "codebox_config")); !os.IsNotExist(statErr) {
+		t.Errorf("ssh alias fragment should be removed on delete; stat err=%v", statErr)
+	}
+	if !strings.Contains(out.String(), `Removing VS Code ssh alias "codebox-demo"`) {
+		t.Errorf("operator should see the alias-removal notice; got:\n%s", out.String())
+	}
+}
+
 func TestDelete_RejectsInvalidInstanceName(t *testing.T) {
 	t.Parallel()
 	a, fr := newApp(t, &stubKeys{key: "k"})

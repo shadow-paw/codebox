@@ -173,6 +173,7 @@ cd my-repo                                      # cd to a git repo
 codebox create demo --python=3.14 --claude      # start sandbox with Python 3.14 & Claude Code
 codebox git push demo origin/main:issue-1234    # origin/main → ~/source as issue-1234
 codebox shell demo                              # ssh in
+codebox vscode demo                             # ...or open it in VS Code
 # inside the sandbox: let Claude (or you) write the commits
 codebox git pull demo issue-1234                # issue-1234 → demo/issue-1234
 codebox delete demo                             # stop and remove the sandbox

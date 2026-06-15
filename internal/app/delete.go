@@ -20,10 +20,12 @@ type DeleteRequest struct {
 
 // Delete tears down a sandbox instance: it confirms the container
 // exists, stops it if it is still running, removes the container, and
-// untags the image codebox built for it. Engine stdout (which
-// otherwise echoes the container/image name) is captured to internal
-// buffers so the operator only sees the human-readable progress lines
-// codebox prints.
+// untags the image codebox built for it. It then cleans up the local
+// artifacts codebox created for the instance — any sshfs mounts, the
+// VS Code ssh alias in ~/.ssh/codebox_config, and the git remote.
+// Engine stdout (which otherwise echoes the container/image name) is
+// captured to internal buffers so the operator only sees the
+// human-readable progress lines codebox prints.
 func (a *App) Delete(ctx context.Context, w io.Writer, req DeleteRequest) error {
 	if err := validateInstanceName(req.Instance); err != nil {
 		return err
@@ -70,6 +72,10 @@ func (a *App) Delete(ctx context.Context, w io.Writer, req DeleteRequest) error 
 		} else {
 			return wrapRunErr("untag image", err, &untagErr)
 		}
+	}
+
+	if err := a.removeVSCodeSSHHost(w, req.Instance); err != nil {
+		return err
 	}
 
 	return removeLocalRemote(ctx, w, a.runners(""), instanceRemoteName(req.Instance))

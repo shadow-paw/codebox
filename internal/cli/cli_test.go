@@ -105,6 +105,7 @@ func TestRun_SubcommandHelpFormsAreIdentical(t *testing.T) {
 		"list",
 		"shell",
 		"port-forward",
+		"vscode",
 		"exec",
 		"file",
 		"git",
@@ -532,6 +533,7 @@ func TestComplete_WiredOnInstanceCommands(t *testing.T) {
 	cmds := [][]string{
 		{"delete"},
 		{"shell"},
+		{"vscode"},
 		{"exec"},
 		{"file", "pull"},
 		{"file", "push"},

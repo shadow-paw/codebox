@@ -48,6 +48,7 @@ func newRootCmd() *cobra.Command {
 		newListCmd(),
 		newShellCmd(),
 		newPortForwardCmd(),
+		newVSCodeCmd(),
 		newExecCmd(),
 		newFileCmd(),
 		newGitCmd(),

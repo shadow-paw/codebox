@@ -13,9 +13,12 @@ import (
 
 func newDeleteCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "delete INSTANCE",
-		Short:             "Delete a sandbox instance",
-		Long:              "Delete a sandbox instance. The container is stopped and removed.",
+		Use:   "delete INSTANCE",
+		Short: "Delete a sandbox instance",
+		Long: "Delete a sandbox instance. The container is stopped and removed, " +
+			"and the local artifacts codebox created for it are cleaned up: any " +
+			"sshfs mounts are unmounted, the VS Code ssh alias is removed from " +
+			"~/.ssh/codebox_config, and the instance's git remote is dropped.",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeInstances,
 		RunE: func(cmd *cobra.Command, args []string) error {
