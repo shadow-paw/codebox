@@ -2,8 +2,45 @@ package image
 
 import (
 	"fmt"
+	"path"
 	"strings"
 )
+
+// runWriteFile emits a RUN instruction that writes body to dest with
+// printf, optionally chowning and chmoding it in the same layer. It
+// avoids both COPY and RUN heredocs so the Dockerfile builds on older
+// podman/docker that lack Dockerfile heredoc support: a COPY heredoc
+// there fails with `copier: stat "/<<EOF": no such file or directory`.
+// printf renders \n escapes, so body's newlines are encoded as \n and
+// its content is escaped for a single-quoted shell argument. The parent
+// directory is created first (COPY would have created it). chown and
+// mode are skipped when empty.
+func runWriteFile(b *strings.Builder, dest, body, chown, mode string) {
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	fmt.Fprintf(b, "RUN mkdir -p %s && \\\n", path.Dir(dest))
+	fmt.Fprintf(b, "    printf '%s' > %s", printfArg(body), dest)
+	if chown != "" {
+		fmt.Fprintf(b, " && \\\n    chown %s %s", chown, dest)
+	}
+	if mode != "" {
+		fmt.Fprintf(b, " && \\\n    chmod %s %s", mode, dest)
+	}
+	b.WriteString("\n")
+}
+
+// printfArg encodes s as the single-quoted format argument to printf:
+// backslashes and percents are doubled so printf emits them literally,
+// newlines become the two-character escape \n, and single quotes are
+// shell-escaped so the surrounding '...' survives an embedded apostrophe.
+func printfArg(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, "%", "%%")
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	s = strings.ReplaceAll(s, "'", `'\''`)
+	return s
+}
 
 // render returns the Dockerfile text for spec s with authKey embedded
 // as the operator's authorized_keys entry. The build order matches the
@@ -18,7 +55,9 @@ func render(s spec, authKey string, opts Options) string {
 
 	var b strings.Builder
 	// The syntax directive must be the first line of the Dockerfile so
-	// BuildKit picks up the modern parser (heredocs, COPY --chmod, ...).
+	// BuildKit picks up the modern parser. Files are written with
+	// `RUN printf ... > file` rather than COPY/RUN heredocs so the build
+	// works on older podman/docker that lack Dockerfile heredoc support.
 	b.WriteString("# syntax=docker/dockerfile:1.7\n")
 	fmt.Fprintf(&b, "FROM %s\n\n", s.baseImage)
 
@@ -27,11 +66,12 @@ func render(s spec, authKey string, opts Options) string {
 
 	if s.needsPamSudoFix {
 		b.WriteString("# Relax /etc/pam.d/sudo for container-friendly passwordless sudo.\n")
-		b.WriteString("COPY <<EOF /etc/pam.d/sudo\n")
-		b.WriteString("auth       sufficient   pam_permit.so\n")
-		b.WriteString("account    sufficient   pam_permit.so\n")
-		b.WriteString("session    required     pam_limits.so\n")
-		b.WriteString("EOF\n\n")
+		runWriteFile(&b, "/etc/pam.d/sudo",
+			"auth       sufficient   pam_permit.so\n"+
+				"account    sufficient   pam_permit.so\n"+
+				"session    required     pam_limits.so\n",
+			"", "")
+		b.WriteString("\n")
 	}
 
 	if s.renameFromUser != "" {
@@ -53,36 +93,36 @@ func render(s spec, authKey string, opts Options) string {
 	b.WriteString("    ssh-keygen -A && \\\n")
 	b.WriteString("    sed -i 's|^session[[:space:]]\\+required[[:space:]]\\+" +
 		"pam_loginuid\\.so|session optional pam_loginuid.so|' /etc/pam.d/sshd\n")
+	sshdDest := "/etc/ssh/sshd_config"
 	if s.hasSshdConfigD {
-		b.WriteString("COPY <<EOF /etc/ssh/sshd_config.d/10-codebox.conf\n")
-	} else {
-		b.WriteString("COPY <<EOF /etc/ssh/sshd_config\n")
+		sshdDest = "/etc/ssh/sshd_config.d/10-codebox.conf"
 	}
-	b.WriteString("Port 2222\n")
-	b.WriteString("PubkeyAuthentication yes\n")
-	b.WriteString("PasswordAuthentication no\n")
-	b.WriteString("UsePAM no\n")
-	b.WriteString("EOF\n\n")
+	runWriteFile(&b, sshdDest,
+		"Port 2222\n"+
+			"PubkeyAuthentication yes\n"+
+			"PasswordAuthentication no\n"+
+			"UsePAM no\n",
+		"", "")
+	b.WriteString("\n")
 
 	b.WriteString("# Passwordless sudo for \"user\".\n")
 	b.WriteString("RUN echo 'user ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/user && \\\n")
 	b.WriteString("    chmod 0440 /etc/sudoers.d/user\n\n")
 
 	b.WriteString("# Init script: start sshd, then block forever.\n")
-	b.WriteString("COPY <<EOF /usr/local/bin/codebox-init\n")
-	b.WriteString("#!/bin/sh\n")
-	b.WriteString("/usr/sbin/sshd\n")
-	b.WriteString("sleep infinity\n")
-	b.WriteString("EOF\n")
-	b.WriteString("RUN chmod 0755 /usr/local/bin/codebox-init\n\n")
+	runWriteFile(&b, "/usr/local/bin/codebox-init",
+		"#!/bin/sh\n"+
+			"/usr/sbin/sshd\n"+
+			"sleep infinity\n",
+		"", "0755")
+	b.WriteString("\n")
 
 	renderExtras(&b, s, opts)
 
 	b.WriteString("# Install the operator's public key.\n")
 	b.WriteString("RUN install -d -m 0700 -o user -g user /home/user/.ssh\n")
-	b.WriteString("COPY --chown=user:user --chmod=0600 <<EOF /home/user/.ssh/authorized_keys\n")
-	b.WriteString(authKey)
-	b.WriteString("\nEOF\n\n")
+	runWriteFile(&b, "/home/user/.ssh/authorized_keys", authKey, "user:user", "0600")
+	b.WriteString("\n")
 
 	b.WriteString("EXPOSE 2222\n\n")
 	b.WriteString(`CMD ["/usr/local/bin/codebox-init"]` + "\n")
@@ -242,20 +282,22 @@ func renderClaude(b *strings.Builder, httpsProxy string) {
 		)
 	}
 	b.WriteString("# Pre-seed the Claude onboarding flag so the CLI does not prompt on first run.\n")
-	b.WriteString("COPY --chown=user:user <<EOF /home/user/.claude.json\n")
-	b.WriteString("{\n")
-	b.WriteString("  \"hasCompletedOnboarding\": true\n")
-	b.WriteString("}\n")
-	b.WriteString("EOF\n\n")
+	runWriteFile(b, "/home/user/.claude.json",
+		"{\n"+
+			"  \"hasCompletedOnboarding\": true\n"+
+			"}\n",
+		"user:user", "")
+	b.WriteString("\n")
 	b.WriteString("# Auto-approve every tool call inside the sandbox.\n")
 	b.WriteString("RUN install -d -m 0700 -o user -g user /home/user/.claude\n")
-	b.WriteString("COPY --chown=user:user <<EOF /home/user/.claude/settings.json\n")
-	b.WriteString("{\n")
-	b.WriteString("  \"permissions\": {\n")
-	b.WriteString("    \"defaultMode\": \"bypassPermissions\"\n")
-	b.WriteString("  }\n")
-	b.WriteString("}\n")
-	b.WriteString("EOF\n\n")
+	runWriteFile(b, "/home/user/.claude/settings.json",
+		"{\n"+
+			"  \"permissions\": {\n"+
+			"    \"defaultMode\": \"bypassPermissions\"\n"+
+			"  }\n"+
+			"}\n",
+		"user:user", "")
+	b.WriteString("\n")
 }
 
 // renderCodex installs the OpenAI Codex CLI via its native installer.
@@ -349,22 +391,28 @@ func renderHTTPSProxy(b *strings.Builder, value, profile string) {
 // and pasta is Podman's default rootless networking command, so no
 // containers.conf network key is needed.
 //
-// The COPY directives create their parent directories if the engine
-// package has not already laid them down, so the block is
-// order-independent of the install RUN above.
+// The config files are written with `RUN printf ... > file` (mkdir -p
+// first), creating their parent directories if the engine package has
+// not already laid them down, so the block is order-independent of the
+// install RUN above. A final recursive chown hands the tree to "user"
+// since this block runs as root.
 func renderPodman(b *strings.Builder) {
 	b.WriteString("# Configure rootless Podman inside the instance.\n")
 	ranges := "root:1:65535\\nuser:1:999\\nuser:1001:64535\\n"
 	b.WriteString("RUN printf '" + ranges + "' > /etc/subuid && \\\n")
 	b.WriteString("    printf '" + ranges + "' > /etc/subgid\n")
-	b.WriteString("COPY --chown=user:user <<EOF /home/user/.config/containers/containers.conf\n")
-	b.WriteString("[containers]\n")
-	b.WriteString("default_sysctls = []\n")
-	b.WriteString("EOF\n")
-	b.WriteString("COPY --chown=user:user <<EOF /home/user/.config/containers/registries.conf\n")
-	b.WriteString("[registries.search]\n")
-	b.WriteString("registries = ['docker.io']\n")
-	b.WriteString("EOF\n\n")
+	runWriteFile(b, "/home/user/.config/containers/containers.conf",
+		"[containers]\n"+
+			"default_sysctls = []\n",
+		"", "")
+	runWriteFile(b, "/home/user/.config/containers/registries.conf",
+		"[registries.search]\n"+
+			"registries = ['docker.io']\n",
+		"", "")
+	// renderPodman runs as root (before the USER user switch), so the
+	// heredocs above and their mkdir'd parents land root-owned; hand the
+	// whole tree to "user" in one layer.
+	b.WriteString("RUN chown -R user:user /home/user/.config\n\n")
 }
 
 // renderNode installs nvm and the requested Node major version. The

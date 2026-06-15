@@ -202,8 +202,14 @@ func TestGenerate_AuthorizedKeyEmbedded(t *testing.T) {
 	if !strings.Contains(out, testKey) {
 		t.Fatalf("authorized key not embedded:\n%s", out)
 	}
-	if !strings.Contains(out, "COPY --chown=user:user --chmod=0600 <<EOF /home/user/.ssh/authorized_keys") {
-		t.Fatalf("authorized_keys COPY line missing or malformed:\n%s", out)
+	for _, want := range []string{
+		"printf '" + testKey + "\\n' > /home/user/.ssh/authorized_keys",
+		"chown user:user /home/user/.ssh/authorized_keys",
+		"chmod 0600 /home/user/.ssh/authorized_keys",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("authorized_keys write missing or malformed (%q):\n%s", want, out)
+		}
 	}
 }
 
@@ -363,7 +369,9 @@ func TestGenerate_ClaudeWritesOnboardingJSON(t *testing.T) {
 	t.Parallel()
 	out := generateOpts(t, image.Options{OS: "debian_13", Claude: true})
 	wants := []string{
-		"COPY --chown=user:user <<EOF /home/user/.claude.json",
+		"printf '",
+		"> /home/user/.claude.json",
+		"chown user:user /home/user/.claude.json",
 		`"hasCompletedOnboarding": true`,
 	}
 	for _, want := range wants {
@@ -391,7 +399,8 @@ func TestGenerate_ClaudeWritesBypassPermissionsSettings(t *testing.T) {
 	t.Parallel()
 	out := generateOpts(t, image.Options{OS: "debian_13", Claude: true})
 	wants := []string{
-		"COPY --chown=user:user <<EOF /home/user/.claude/settings.json",
+		"> /home/user/.claude/settings.json",
+		"chown user:user /home/user/.claude/settings.json",
 		`"permissions":`,
 		`"defaultMode": "bypassPermissions"`,
 	}
@@ -686,12 +695,13 @@ func TestGenerate_PodmanInstall(t *testing.T) {
 		"# Configure rootless Podman inside the instance.",
 		`printf 'root:1:65535\nuser:1:999\nuser:1001:64535\n' > /etc/subuid`,
 		`printf 'root:1:65535\nuser:1:999\nuser:1001:64535\n' > /etc/subgid`,
-		"COPY --chown=user:user <<EOF /home/user/.config/containers/containers.conf",
+		"> /home/user/.config/containers/containers.conf",
 		"[containers]",
 		"default_sysctls = []",
-		"COPY --chown=user:user <<EOF /home/user/.config/containers/registries.conf",
+		"> /home/user/.config/containers/registries.conf",
 		"[registries.search]",
-		"registries = ['docker.io']",
+		`registries = ['\''docker.io'\'']`,
+		"RUN chown -R user:user /home/user/.config",
 	}
 	for _, want := range wants {
 		if !strings.Contains(out, want) {
