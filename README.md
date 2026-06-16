@@ -20,6 +20,125 @@ and intentionally has no runtime dependencies beyond the standard library.
 - **Opinionated defaults.** Sensible base images, tooling, and shell/editor
   configuration ship by default. Override when you need to.
 
+## Typical setups
+
+The same four pieces appear in every deployment — they just land on
+different machines:
+
+- **VS Code** — your editor.
+- **project** — the git checkout you edit, holding the project
+  `./.codebox.conf`. `codebox` runs from here.
+- **codebox** — this CLI; it drives the orchestrator and opens SSH
+  sessions into the sandbox.
+- **sandbox** — the container that runs the coding agent. It is an SSH
+  endpoint with the repo checked out at `~/source`.
+
+Where the orchestrator (Podman/Docker) runs is decided by the
+`--remote` flag: omit it and the sandbox runs locally; set
+`--remote=user@host` and `codebox` drives the orchestrator on that host
+over SSH. The three layouts below cover almost every case.
+
+In the diagrams, `══╪══ ssh ══` marks a machine boundary crossed over
+SSH, and the double-ruled box is the sandbox container.
+
+### 1. Full local
+
+Everything on one workstation: you edit the project in VS Code, run
+`codebox` from the same machine, and the sandbox container runs locally.
+No `--remote`.
+
+```
+workstation ─────────────────────────────────────────────
+   VS Code ── edits ─► [ project + ./.codebox.conf ]
+   codebox ── drives ─► [ podman / docker ]
+                              │ runs
+                              ▼
+   ╔═══════════════════════════════╗
+   ║ sandbox container             ║
+   ║   ~/source · agent · sshd     ║
+   ╚═══════════════════════════════╝
+      ▲
+      └── codebox shell / VS Code Remote-SSH
+```
+
+```sh
+codebox workflow issue-1234        # orchestrator + sandbox are local
+```
+
+Best for a workstation with enough CPU, RAM, and disk to host containers
+directly.
+
+### 2. Remote sandbox
+
+You keep editing and running `codebox` on the workstation, but the
+orchestrator — and therefore the sandbox — lives on a Linux host.
+`codebox` drives it over SSH via `--remote`, and reaches the container
+through the host as a jump (`ProxyJump`).
+
+```
+workstation ─────────────────────────────────────────────
+   VS Code ── edits ─► [ project + ./.codebox.conf ]
+   codebox
+      │  --remote=user@linux   (drives the orchestrator over SSH)
+      │
+══════╪═══════════════ ssh ═══════════════════════════════
+      ▼
+linux host ──────────────────────────────────────────────
+   [ podman / docker ]
+      │ runs
+      ▼
+   ╔═══════════════════════════════╗
+   ║ sandbox container             ║
+   ║   ~/source · agent · sshd     ║
+   ╚═══════════════════════════════╝
+      ▲
+      └── codebox shell / VS Code Remote-SSH
+          (reaches the container via the linux host, ProxyJump)
+```
+
+```sh
+codebox workflow issue-1234 --remote=user@linux
+# or set it once in ~/.codebox.conf:  args.all: [ remote=user@linux ]
+```
+
+Best when your workstation is light (a laptop) but you have a beefy
+build host. The project checkout and `git` stay on the workstation;
+only the container workload moves.
+
+### 3. Remote everything (VS Code Remote-SSH)
+
+The workstation runs only VS Code, connected to the Linux host with
+Remote-SSH. The project checkout, `codebox`, and the sandbox all live on
+the host — from `codebox`'s point of view this is the *full local*
+layout (setup 1), just driven through a VS Code Remote-SSH session.
+
+```
+workstation ─────────────────────────────────────────────
+   VS Code
+      │  Remote-SSH
+══════╪═══════════════ ssh ═══════════════════════════════
+      ▼
+linux host ──────────────────────────────────────────────
+   VS Code Server ── edits ─► [ project + ./.codebox.conf ]
+   codebox ────────── drives ─► [ podman / docker ]
+                                     │ runs
+                                     ▼
+   ╔═══════════════════════════════╗
+   ║ sandbox container             ║
+   ║   ~/source · agent · sshd     ║
+   ╚═══════════════════════════════╝
+      ▲
+      └── codebox shell / VS Code terminal on the host
+```
+
+```sh
+# in the VS Code Remote-SSH terminal, on the linux host:
+codebox workflow issue-1234        # no --remote: orchestrator is local to the host
+```
+
+Best when the workstation is a thin client and you want a single Linux
+environment that holds your editing, tooling, and sandboxes together.
+
 ## Prerequisites
 
 - [Go](https://go.dev/dl/) **1.26.x** or newer.
