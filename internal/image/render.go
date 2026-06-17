@@ -269,7 +269,9 @@ func renderPython(b *strings.Builder, version string) {
 //   - /home/user/.claude/settings.json with permissions.defaultMode
 //     set to "bypassPermissions" so every tool call is auto-approved.
 //     The sandbox is the trust boundary; the CLI must not gate actions
-//     behind interactive prompts inside it.
+//     behind interactive prompts inside it. The same file sets
+//     includeCoAuthoredBy to false so the CLI does not append the
+//     "Co-Authored-By: Claude" footer to git commits made inside it.
 //
 // DISABLE_TELEMETRY=1 is exported in the login profile so the CLI's
 // telemetry and data collection stay off in interactive shells, matching
@@ -294,13 +296,15 @@ func renderClaude(b *strings.Builder, profile, httpsProxy string) {
 			"}\n",
 		"user:user", "")
 	b.WriteString("\n")
-	b.WriteString("# Auto-approve every tool call inside the sandbox.\n")
+	b.WriteString("# Auto-approve every tool call inside the sandbox, and\n")
+	b.WriteString("# suppress the Co-Authored-By footer on git commits.\n")
 	b.WriteString("RUN install -d -m 0700 -o user -g user /home/user/.claude\n")
 	runWriteFile(b, "/home/user/.claude/settings.json",
 		"{\n"+
 			"  \"permissions\": {\n"+
 			"    \"defaultMode\": \"bypassPermissions\"\n"+
-			"  }\n"+
+			"  },\n"+
+			"  \"includeCoAuthoredBy\": false\n"+
 			"}\n",
 		"user:user", "")
 	b.WriteString("\n")

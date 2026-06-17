@@ -428,6 +428,7 @@ func TestGenerate_ClaudeWritesBypassPermissionsSettings(t *testing.T) {
 		"chown user:user /home/user/.claude/settings.json",
 		`"permissions":`,
 		`"defaultMode": "bypassPermissions"`,
+		`"includeCoAuthoredBy": false`,
 	}
 	for _, want := range wants {
 		if !strings.Contains(out, want) {
