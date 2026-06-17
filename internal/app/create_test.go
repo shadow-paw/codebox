@@ -131,7 +131,7 @@ func TestCreate_HappyPath_Local(t *testing.T) {
 	}
 	if !strings.Contains(
 		fr.calls[2].cmd,
-		"podman run -d --name 'demo' --hostname 'demo' --label codebox=true --publish-all",
+		"podman run -d --restart=unless-stopped --name 'demo' --hostname 'demo' --label codebox=true --publish-all",
 	) {
 		t.Errorf("call[2] should run the container, got %q", fr.calls[2].cmd)
 	}

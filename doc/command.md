@@ -613,10 +613,13 @@ For each invocation the use-case layer performs, in order:
    into the image. `--rebuild` adds `--no-cache`. Build output is
    streamed to the operator's terminal as it is produced.
 
-3. **Container start.** `<engine> run -d --name INSTANCE --hostname
-   INSTANCE --label codebox=true --publish-all INSTANCE`. The hostname
-   is set so an interactive shell inside the container makes the
-   sandbox immediately identifiable. When `--podman` is set, the flags
+3. **Container start.** `<engine> run -d --restart=unless-stopped
+   --name INSTANCE --hostname INSTANCE --label codebox=true
+   --publish-all INSTANCE`. The hostname is set so an interactive shell
+   inside the container makes the sandbox immediately identifiable.
+   `--restart=unless-stopped` brings the sandbox back up after an
+   orchestrator host reboot unless it was explicitly stopped (e.g.
+   `codebox stop`). When `--podman` is set, the flags
    `--device /dev/fuse --device /dev/net/tun --cap-add=sys_admin
    --cap-add=net_admin --cap-add=mknod --security-opt label=disable
    --security-opt unmask=ALL` are added before `--publish-all` so the

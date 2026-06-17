@@ -120,6 +120,11 @@ const podmanRunFlags = "--device /dev/fuse --device /dev/net/tun " +
 // the instance name so an interactive shell shows the operator which
 // sandbox they are in.
 //
+// `--restart=unless-stopped` keeps the sandbox alive across an
+// orchestrator host reboot: the engine restarts the container on boot
+// unless the operator had explicitly stopped it (e.g. `codebox stop`),
+// in which case it stays down.
+//
 // labels carries extra `key=value` metadata stamped onto the container
 // in addition to the mandatory `codebox=true` — e.g. `tmux=true` and a
 // boolean label per installed agent (`claude=true`). `codebox shell`
@@ -143,7 +148,7 @@ func (e *Engine) Run(instance string, podman bool, labels []string) string {
 		podmanFlags = " " + podmanRunFlags
 	}
 	return fmt.Sprintf(
-		`%s run -d --name %s --hostname %s --label codebox=true%s%s --publish-all %s`,
+		`%s run -d --restart=unless-stopped --name %s --hostname %s --label codebox=true%s%s --publish-all %s`,
 		e.bin, q, q, labelFlags, podmanFlags, q,
 	)
 }

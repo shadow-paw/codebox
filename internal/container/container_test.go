@@ -76,7 +76,7 @@ func TestRun_LabelsAndPublishAll(t *testing.T) {
 	t.Parallel()
 	e, _ := container.New("podman")
 	got := e.Run("demo", false, nil)
-	want := `podman run -d --name 'demo' --hostname 'demo' --label codebox=true --publish-all 'demo'`
+	want := `podman run -d --restart=unless-stopped --name 'demo' --hostname 'demo' --label codebox=true --publish-all 'demo'`
 	if got != want {
 		t.Fatalf("Run = %q\nwant %q", got, want)
 	}
@@ -89,7 +89,7 @@ func TestRun_MetadataLabels(t *testing.T) {
 	t.Parallel()
 	e, _ := container.New("podman")
 	got := e.Run("demo", false, []string{"tmux=true", "claude=true"})
-	want := `podman run -d --name 'demo' --hostname 'demo' ` +
+	want := `podman run -d --restart=unless-stopped --name 'demo' --hostname 'demo' ` +
 		`--label codebox=true --label tmux=true --label claude=true --publish-all 'demo'`
 	if got != want {
 		t.Fatalf("Run labels = %q\nwant %q", got, want)
@@ -120,7 +120,7 @@ func TestRun_PodmanAddsDeviceAndCapFlags(t *testing.T) {
 	t.Parallel()
 	e, _ := container.New("podman")
 	got := e.Run("demo", true, nil)
-	want := `podman run -d --name 'demo' --hostname 'demo' --label codebox=true ` +
+	want := `podman run -d --restart=unless-stopped --name 'demo' --hostname 'demo' --label codebox=true ` +
 		`--device /dev/fuse --device /dev/net/tun ` +
 		`--cap-add=sys_admin --cap-add=net_admin --cap-add=mknod ` +
 		`--security-opt label=disable --security-opt unmask=ALL --publish-all 'demo'`
