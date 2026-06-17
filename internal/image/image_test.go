@@ -360,6 +360,31 @@ func TestGenerate_ClaudeInstall(t *testing.T) {
 	}
 }
 
+// TestGenerate_ClaudeDisablesTelemetry pins that the --claude layer
+// exports DISABLE_TELEMETRY=1 to the login profile so Claude Code's
+// telemetry and data collection stay off in interactive shells.
+func TestGenerate_ClaudeDisablesTelemetry(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", Claude: true})
+	want := "echo 'export DISABLE_TELEMETRY=1' >> /home/user/.profile"
+	if !strings.Contains(out, want) {
+		t.Fatalf("Claude layer should export DISABLE_TELEMETRY=1:\nwant: %q\nout:\n%s", want, out)
+	}
+}
+
+// TestGenerate_TelemetryOptOutOmittedWhenDisabled keeps the Claude
+// telemetry opt-out off the no-agent baseline.
+func TestGenerate_TelemetryOptOutOmittedWhenDisabled(t *testing.T) {
+	t.Parallel()
+	out := generate(t, "debian_13")
+	if strings.Contains(out, "DISABLE_TELEMETRY") {
+		t.Fatalf("DISABLE_TELEMETRY must not appear without --claude:\n%s", out)
+	}
+	if strings.Contains(out, "OPENCODE_ENABLE_TELEMETRY") {
+		t.Fatalf("OPENCODE_ENABLE_TELEMETRY must not appear without --opencode:\n%s", out)
+	}
+}
+
 // TestGenerate_ClaudeWritesOnboardingJSON pins the second half of the
 // --claude layer: a /home/user/.claude.json with hasCompletedOnboarding
 // pre-set so the CLI does not prompt on first run inside the sandbox.
@@ -535,6 +560,18 @@ func TestGenerate_OpencodeInstall(t *testing.T) {
 	}
 }
 
+// TestGenerate_OpencodeDisablesTelemetry pins that the --opencode layer
+// exports OPENCODE_ENABLE_TELEMETRY=0 to the login profile so opencode's
+// telemetry and data collection stay off in interactive shells.
+func TestGenerate_OpencodeDisablesTelemetry(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", Opencode: true})
+	want := "echo 'export OPENCODE_ENABLE_TELEMETRY=0' >> /home/user/.profile"
+	if !strings.Contains(out, want) {
+		t.Fatalf("opencode layer should export OPENCODE_ENABLE_TELEMETRY=0:\nwant: %q\nout:\n%s", want, out)
+	}
+}
+
 // TestGenerate_OpencodeInstallUsesHTTPSProxy mirrors the Claude proxy
 // contract: --https-proxy is exported inline for the opencode install
 // RUN and never leaks into an ENV directive.
@@ -593,6 +630,19 @@ func TestGenerate_CodexInstall(t *testing.T) {
 	for _, want := range wants {
 		if !strings.Contains(out, want) {
 			t.Errorf("Codex layer missing %q\n%s", want, out)
+		}
+	}
+}
+
+// TestGenerate_CodexNoTelemetryOptOut pins that the --codex layer emits
+// no telemetry env-var nudge: Codex ships with OpenTelemetry disabled by
+// default, so unlike the Claude and opencode layers it needs none.
+func TestGenerate_CodexNoTelemetryOptOut(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{OS: "debian_13", Codex: true})
+	for _, unwanted := range []string{"DISABLE_TELEMETRY", "OPENCODE_ENABLE_TELEMETRY", "TELEMETRY_OPTOUT"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("Codex layer must not export %q:\n%s", unwanted, out)
 		}
 	}
 }

@@ -189,7 +189,7 @@ func renderExtras(b *strings.Builder, s spec, opts Options) {
 		renderPython(b, opts.Python)
 	}
 	if opts.Claude {
-		renderClaude(b, strings.TrimSpace(opts.HTTPSProxy))
+		renderClaude(b, profile, strings.TrimSpace(opts.HTTPSProxy))
 	}
 	if opts.Codex {
 		renderCodex(b, strings.TrimSpace(opts.HTTPSProxy))
@@ -270,7 +270,11 @@ func renderPython(b *strings.Builder, version string) {
 //     set to "bypassPermissions" so every tool call is auto-approved.
 //     The sandbox is the trust boundary; the CLI must not gate actions
 //     behind interactive prompts inside it.
-func renderClaude(b *strings.Builder, httpsProxy string) {
+//
+// DISABLE_TELEMETRY=1 is exported in the login profile so the CLI's
+// telemetry and data collection stay off in interactive shells, matching
+// the opt-out the .NET layer applies.
+func renderClaude(b *strings.Builder, profile, httpsProxy string) {
 	b.WriteString("# Install Claude Code.\n")
 	if httpsProxy == "" {
 		b.WriteString("RUN curl -fsSL https://claude.ai/install.sh | bash\n\n")
@@ -281,6 +285,8 @@ func renderClaude(b *strings.Builder, httpsProxy string) {
 			escaped,
 		)
 	}
+	b.WriteString("# Disable Claude Code telemetry and data collection.\n")
+	fmt.Fprintf(b, "RUN echo 'export DISABLE_TELEMETRY=1' >> %s\n\n", profile)
 	b.WriteString("# Pre-seed the Claude onboarding flag so the CLI does not prompt on first run.\n")
 	runWriteFile(b, "/home/user/.claude.json",
 		"{\n"+
@@ -313,6 +319,10 @@ func renderClaude(b *strings.Builder, httpsProxy string) {
 //
 // The operator's ~/.codex/config.toml is *not* baked into the image — it
 // is pushed in afterwards by App.Create when it exists on the host.
+//
+// No telemetry opt-out is exported: Codex ships with OpenTelemetry
+// disabled by default, so unlike the Claude and opencode layers this one
+// needs no env-var nudge.
 func renderCodex(b *strings.Builder, httpsProxy string) {
 	b.WriteString("# Install OpenAI Codex CLI.\n")
 	if httpsProxy == "" {
@@ -338,6 +348,10 @@ func renderCodex(b *strings.Builder, httpsProxy string) {
 // so curl (and any sub-downloads) route through it, mirroring
 // renderClaude; the proxy is not emitted as a global ENV directive.
 //
+// OPENCODE_ENABLE_TELEMETRY=0 is exported in the login profile so
+// opencode's telemetry and data collection stay off in interactive
+// shells, matching the opt-out the Claude and .NET layers apply.
+//
 // The operator's opencode.json is *not* baked into the image — it is
 // pushed in afterwards by App.Create when it exists on the host.
 func renderOpencode(b *strings.Builder, profile, httpsProxy string) {
@@ -351,7 +365,8 @@ func renderOpencode(b *strings.Builder, profile, httpsProxy string) {
 			escaped,
 		)
 	}
-	fmt.Fprintf(b, "RUN echo 'export PATH=\"$HOME/.opencode/bin:$PATH\"' >> %s\n\n", profile)
+	fmt.Fprintf(b, "RUN echo 'export PATH=\"$HOME/.opencode/bin:$PATH\"' >> %s && \\\n", profile)
+	fmt.Fprintf(b, "    echo 'export OPENCODE_ENABLE_TELEMETRY=0' >> %s\n\n", profile)
 }
 
 // renderHTTPSProxy appends `export HTTPS_PROXY="<value>"` to the
