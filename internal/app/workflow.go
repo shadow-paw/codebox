@@ -44,6 +44,10 @@ type WorkflowRequest struct {
 	Psql                bool
 	Tmux                bool
 	Podman              bool
+
+	// AdditionalRun forwards the builder.additional-run custom build
+	// steps to the underlying Create; see CreateRequest.AdditionalRun.
+	AdditionalRun []string
 }
 
 // Workflow is a shortcut that chains create, git push, and shell.
@@ -94,6 +98,7 @@ func (a *App) Workflow(
 		Psql:                req.Psql,
 		Tmux:                req.Tmux,
 		Podman:              req.Podman,
+		AdditionalRun:       req.AdditionalRun,
 	}); err != nil {
 		return err
 	}

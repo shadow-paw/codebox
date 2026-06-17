@@ -1116,3 +1116,44 @@ func TestGenerate_EmptyKeyIsRejected(t *testing.T) {
 		t.Fatal("Generate must reject an empty authorized key")
 	}
 }
+
+// TestGenerate_AdditionalRunSteps pins the builder.additional-run
+// layer: each command becomes its own RUN emitted verbatim (as root, no
+// bash wrapper), and the block sits before the operator-key install so
+// the custom steps run while the toolchains are present but before the
+// key is written.
+func TestGenerate_AdditionalRunSteps(t *testing.T) {
+	t.Parallel()
+	out := generateOpts(t, image.Options{
+		OS:            "debian_13",
+		AdditionalRun: []string{"echo $(whoami)"},
+	})
+	for _, want := range []string{
+		"# Custom build steps (builder.additional-run).",
+		"RUN echo $(whoami)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "bash -lc") {
+		t.Fatalf("additional-run steps must not be wrapped in a bash login shell:\n%s", out)
+	}
+	// The custom step precedes the operator-key install.
+	who := strings.Index(out, "RUN echo $(whoami)")
+	key := strings.Index(out, "# Install the operator's public key.")
+	if !(who < key) {
+		t.Fatalf("additional-run step must precede the operator key (who=%d key=%d):\n%s",
+			who, key, out)
+	}
+}
+
+// TestGenerate_AdditionalRunOmittedByDefault confirms an empty
+// AdditionalRun emits no custom-step layer.
+func TestGenerate_AdditionalRunOmittedByDefault(t *testing.T) {
+	t.Parallel()
+	out := generate(t, "debian_13")
+	if strings.Contains(out, "builder.additional-run") {
+		t.Fatalf("default Dockerfile should not mention custom build steps:\n%s", out)
+	}
+}

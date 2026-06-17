@@ -119,6 +119,8 @@ func render(s spec, authKey string, opts Options) string {
 
 	renderExtras(&b, s, opts)
 
+	renderAdditionalRun(&b, opts.AdditionalRun)
+
 	b.WriteString("# Install the operator's public key.\n")
 	b.WriteString("RUN install -d -m 0700 -o user -g user /home/user/.ssh\n")
 	runWriteFile(&b, "/home/user/.ssh/authorized_keys", authKey, "user:user", "0600")
@@ -203,6 +205,24 @@ func renderExtras(b *strings.Builder, s spec, opts Options) {
 	if needsUser {
 		b.WriteString("USER root\n\n")
 	}
+}
+
+// renderAdditionalRun appends the operator's custom build steps from the
+// builder.additional-run config. The block sits after the toolchain,
+// agent, and tool layers and before the operator-key install, so the
+// just-installed software is present when the commands run. Each entry
+// becomes its own RUN emitted verbatim and executed as root — the
+// default build context at this point — matching the other install
+// layers, which also run as root and address files by absolute path.
+func renderAdditionalRun(b *strings.Builder, cmds []string) {
+	if len(cmds) == 0 {
+		return
+	}
+	b.WriteString("# Custom build steps (builder.additional-run).\n")
+	for _, c := range cmds {
+		fmt.Fprintf(b, "RUN %s\n", c)
+	}
+	b.WriteString("\n")
 }
 
 // renderGolang installs the requested Go release into /usr/local/go and

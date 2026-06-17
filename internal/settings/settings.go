@@ -24,6 +24,18 @@ type Config struct {
 	// per-project. See ResolvePortForwards.
 	PortForward []string `yaml:"port-forward"`
 
+	// Builder holds custom image-build steps. AdditionalRun lists shell
+	// commands that become extra RUN instructions in the late build
+	// stage — after the toolchains, agents, and tools are installed and
+	// before the operator's SSH key is added. Unlike the args sections
+	// these are structured data rather than flags, so they are read
+	// directly by `codebox create` (and `codebox workflow`) instead of
+	// being injected into the command line. Both the global and project
+	// configs contribute; see ResolveAdditionalRun.
+	Builder struct {
+		AdditionalRun []string `yaml:"additional-run"`
+	} `yaml:"builder"`
+
 	// Git holds project-level git defaults.
 	Git struct {
 		// Push is the default source side of a push refspec — a

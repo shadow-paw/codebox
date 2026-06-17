@@ -102,6 +102,12 @@ type CreateRequest struct {
 	// Podman installs rootless Podman inside the instance and starts the
 	// container with --privileged so nested containers can run.
 	Podman bool
+
+	// AdditionalRun carries the operator's custom build commands (the
+	// builder.additional-run config). They become extra RUN steps in the
+	// late build stage, after the toolchains/agents/tools and before the
+	// SSH key; see image.Options.AdditionalRun.
+	AdditionalRun []string
 }
 
 // Create provisions a sandbox instance: it confirms the instance does
@@ -147,6 +153,7 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 		Psql:          req.Psql,
 		Tmux:          req.Tmux,
 		Podman:        req.Podman,
+		AdditionalRun: req.AdditionalRun,
 	}); err != nil {
 		return err
 	}

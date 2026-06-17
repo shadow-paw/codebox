@@ -152,6 +152,10 @@ func runWorkflow(
 	if err != nil {
 		return err
 	}
+	additionalRun, err := builderAdditionalRun(home)
+	if err != nil {
+		return err
+	}
 	return app.New(home).Workflow(ctx, stdin, stdout, stderr, app.WorkflowRequest{
 		Orchestrator:        opts.orchestrator,
 		Remote:              opts.remote,
@@ -174,5 +178,6 @@ func runWorkflow(
 		Psql:                opts.psql,
 		Tmux:                opts.tmux,
 		Podman:              opts.podman,
+		AdditionalRun:       additionalRun,
 	})
 }

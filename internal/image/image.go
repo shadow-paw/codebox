@@ -65,6 +65,13 @@ type Options struct {
 	// /etc/subgid, and containers.conf so the in-container user can run
 	// containers. The layer is emitted before any agent install.
 	Podman bool
+
+	// AdditionalRun lists the operator's custom build commands (the
+	// builder.additional-run config). Each entry becomes its own RUN in
+	// the late build stage — after the toolchains, agents, and tools are
+	// installed and before the operator's SSH key is added — emitted
+	// verbatim and executed as root. An empty slice adds nothing.
+	AdditionalRun []string
 }
 
 // SupportedOS returns the OS keys understood by Generate in

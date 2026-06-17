@@ -220,6 +220,15 @@ When there is no `port-forward:` list but a compose file is present
 the command auto-detects the compose services' published ports and
 forwards each to itself.
 
+Need a tool the flags don't cover? List shell commands under
+`builder.additional-run` and each becomes an extra `RUN` step (run as
+root, after the toolchains are installed and before the SSH key):
+```yaml
+builder:
+  additional-run:
+    - echo $(whoami)
+```
+
 
 For the full picture:
 

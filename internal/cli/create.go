@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"codebox/internal/app"
+	"codebox/internal/settings"
 )
 
 type createOpts struct {
@@ -159,10 +160,32 @@ func registerCreateValueCompletions(cmd *cobra.Command) {
 	}
 }
 
+// builderAdditionalRun loads the global and project .codebox.conf files
+// and returns their merged builder.additional-run steps (global first,
+// then project). It is the create/workflow counterpart to
+// projectPushSource: builder.additional-run is structured data, not a
+// flag, so it cannot ride the args-injection path and is read here
+// instead.
+func builderAdditionalRun(home string) ([]string, error) {
+	workDir, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("locate current directory: %w", err)
+	}
+	global, project, err := settings.Load(home, workDir)
+	if err != nil {
+		return nil, err
+	}
+	return settings.ResolveAdditionalRun(global, project), nil
+}
+
 func runCreate(ctx context.Context, out io.Writer, opts createOpts) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("locate home directory: %w", err)
+	}
+	additionalRun, err := builderAdditionalRun(home)
+	if err != nil {
+		return err
 	}
 	return app.New(home).Create(ctx, out, app.CreateRequest{
 		Instance:            opts.instance,
@@ -185,5 +208,6 @@ func runCreate(ctx context.Context, out io.Writer, opts createOpts) error {
 		Psql:                opts.psql,
 		Tmux:                opts.tmux,
 		Podman:              opts.podman,
+		AdditionalRun:       additionalRun,
 	})
 }

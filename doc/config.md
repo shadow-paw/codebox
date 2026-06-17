@@ -21,13 +21,16 @@ need. When both exist they are merged (see [Precedence](#precedence)).
 
 ## File format
 
-A config file has up to four top-level keys:
+A config file has up to five top-level keys:
 
 ```yaml
 args:
   all:            # flags injected before the subcommand (every command)
     - ...
   create:         # flags injected into `create` and `workflow`
+    - ...
+builder:
+  additional-run: # custom RUN steps appended to the generated image build
     - ...
 port-forward:     # project-only: forwards for `codebox port-forward`
   - ...
@@ -104,6 +107,48 @@ See [`command.md`](command.md) for the complete list of `create` flags
 (`--python`, `--golang`, `--dotnet`, `--codex`, `--podman`, `--tmux`, …)
 and their accepted values.
 
+## `builder.additional-run` — custom image build steps
+
+The flags above pick from the toolchains, agents, and tools `codebox`
+knows how to install. When a project needs something off that list — an
+extra global npm package, a linter, a system library — list the commands
+under `builder.additional-run` and each becomes its own `RUN` in the
+generated Dockerfile:
+
+```yaml
+# ./.codebox.conf
+builder:
+  additional-run:
+    - echo $(whoami)
+```
+
+The steps are emitted in the **late build stage**: after the toolchains,
+agents, and tools the flags requested are installed, and before the
+operator's SSH key is added. Each command is written out verbatim as its
+own `RUN` and runs as **root**, the same as the install layers above —
+so a step that pulls system packages needs no `sudo`:
+
+```yaml
+builder:
+  additional-run:
+    - apt-get update && apt-get install -y --no-install-recommends graphviz
+```
+
+Because a `RUN` is not a login shell, address tools the toolchains
+install by absolute path (e.g. `/home/user/.local/bin/uv`) rather than
+relying on the in-container user's `PATH`.
+
+Unlike `port-forward` and `git.push`, this key is **not** project-only:
+the global `~/.codebox.conf` and the project `./.codebox.conf` both
+contribute. The global steps run first, then the project steps — so an
+org-wide global file can seed common tooling while each project appends
+its own on top. Blank list entries are ignored.
+
+The commands are run verbatim, so a typo surfaces as an image-build
+failure rather than a config error. `codebox create` echoes the full
+generated Dockerfile before building, so you can see exactly where the
+steps land.
+
 ## `port-forward` — forwards for `codebox port-forward`
 
 The `port-forward` key lists the forwards that `codebox port-forward`
@@ -178,6 +223,10 @@ explicit CLI flag  >  project .codebox.conf  >  global ~/.codebox.conf
   the project value replaces the global one (matched by flag name, so
   `node=25` in the project beats `node=24` in the global file).
 - **Otherwise they merge.** Flags set in only one file are all applied.
+
+This precedence governs the flag sections. `builder.additional-run` is
+not a flag and does not override: the global and project lists are
+concatenated (global first), so both always apply.
 
 ## A complete example
 
