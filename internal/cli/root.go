@@ -21,7 +21,7 @@ func newRootCmd() *cobra.Command {
 		Long: "codebox creates, inspects, and tears down container-based sandboxes\n" +
 			"that host autonomous coding agents. Sandboxes run on Podman or\n" +
 			"Docker, locally or on a remote host, and are reachable over SSH.",
-		Version:       version,
+		Version:       versionString(),
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		RunE: func(cmd *cobra.Command, _ []string) error {
