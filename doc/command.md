@@ -179,11 +179,11 @@ open until interrupted, **without** opening a shell. Unlike `shell`'s
 `--port`, the set of forwards is read from configuration rather than
 flags, so the same mapping is reused every time.
 
-The forwards come from the `port-forward:` list in the **project**
-`.codebox.conf` (the file in the current directory; a `port-forward:`
-entry in the global `~/.codebox.conf` is ignored, since forwards are
-inherently per-project). Each entry is `LOCAL:REMOTE`; a bare `PORT`
-maps that port to itself (`PORT:PORT`):
+The forwards come from the `port-forward:` list in either
+`.codebox.conf`: the project file in the current directory and the
+global `~/.codebox.conf` are merged (project entries first, then global)
+and deduplicated. Each entry is `LOCAL:REMOTE`; a bare `PORT` maps that
+port to itself (`PORT:PORT`):
 
 ```yaml
 port-forward:
@@ -192,7 +192,7 @@ port-forward:
   - 8080           # localhost:8080  -> 8080 in the instance
 ```
 
-When the project config has no `port-forward:` list **and** a
+When neither config has a `port-forward:` list **and** a
 compose file is present in the current directory (one of
 `compose.yaml`, `compose.yml`, `docker-compose.yaml`,
 `docker-compose.yml`, `podman-compose.yaml`, `podman-compose.yml`, in
@@ -403,9 +403,9 @@ Positional arguments:
   skips the local fetch and pushes the named local branch directly,
   so this form works in repos with no remote configured.
 
-When `git.push-from` is set in the project's `.codebox.conf` the source side
-may be omitted: pass just `target_branch` (or `:target_branch`), or drop
-`REFSPEC` entirely to target a branch named after `INSTANCE`. The
+When `git.push-from` is set in a `.codebox.conf` (project, else global) the
+source side may be omitted: pass just `target_branch` (or `:target_branch`),
+or drop `REFSPEC` entirely to target a branch named after `INSTANCE`. The
 configured source is filled in — see
 [Configuration](config.md#gitpush-from--default-push-source-for-workflow-and-git-push).
 
@@ -571,8 +571,8 @@ codebox workflow main:issue-1234          # local branch, no upstream fetch
 codebox workflow issue-1234               # source from git.push-from in .codebox.conf
 ```
 
-When `git.push-from` is set in the project's `.codebox.conf`, the source side
-may be omitted — pass just the `target_branch` (or `:target_branch`) and
+When `git.push-from` is set in a `.codebox.conf` (project, else global), the
+source side may be omitted — pass just the `target_branch` (or `:target_branch`) and
 the configured source is filled in. See
 [Configuration](config.md#gitpush-from--default-push-source-for-workflow-and-git-push).
 
@@ -1034,10 +1034,11 @@ them from a non-zero exit from the in-container shell.
 `port-forward` is fully wired today. Port resolution happens in the CLI
 layer before the use-case runs:
 
-1. **Resolve forwards.** The project `.codebox.conf` is read. When it
-   carries a `port-forward:` list, each entry is normalised to
-   `LOCAL:REMOTE` (a bare `PORT` becomes `PORT:PORT`), validated as a
-   port number, and de-duplicated. Otherwise, if a compose file
+1. **Resolve forwards.** Both `.codebox.conf` files are read. When
+   either carries a `port-forward:` list, the entries are merged
+   (project first, then global) and each is normalised to `LOCAL:REMOTE`
+   (a bare `PORT` becomes `PORT:PORT`), validated as a port number, and
+   de-duplicated. Otherwise, if a compose file
    is present in the current directory, its published ports are
    detected and mapped to themselves, ordered by service name then
    listing order. An empty result fails with `no ports to forward: ...`

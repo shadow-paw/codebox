@@ -10,13 +10,49 @@ import (
 func TestResolvePortForwards_ConfigList(t *testing.T) {
 	t.Parallel()
 	cfg := Config{PortForward: []string{"13000:3000", "13001:3001", "8080"}}
-	got, err := ResolvePortForwards(cfg, "")
+	got, err := ResolvePortForwards(Config{}, cfg, "")
 	if err != nil {
 		t.Fatalf("ResolvePortForwards: %v", err)
 	}
 	want := []string{"13000:3000", "13001:3001", "8080:8080"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestResolvePortForwards_MergesGlobalAndProject pins that both configs
+// contribute, project entries come first, and duplicates are dropped.
+func TestResolvePortForwards_MergesGlobalAndProject(t *testing.T) {
+	t.Parallel()
+	global := Config{PortForward: []string{"8080", "5432"}}
+	project := Config{PortForward: []string{"13000:3000", "8080"}}
+	got, err := ResolvePortForwards(global, project, "")
+	if err != nil {
+		t.Fatalf("ResolvePortForwards: %v", err)
+	}
+	want := []string{"13000:3000", "8080:8080", "5432:5432"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestResolvePortForwards_GlobalOnly pins that a global-only list is
+// honored (the global file is no longer ignored) and beats compose.
+func TestResolvePortForwards_GlobalOnly(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeCompose(t, dir, "docker-compose.yaml", `services:
+  web:
+    ports:
+      - "9000:9000"
+`)
+	global := Config{PortForward: []string{"7000"}}
+	got, err := ResolvePortForwards(global, Config{}, dir)
+	if err != nil {
+		t.Fatalf("ResolvePortForwards: %v", err)
+	}
+	if want := []string{"7000:7000"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("global list should be used and beat compose; got %v, want %v", got, want)
 	}
 }
 
@@ -29,7 +65,7 @@ func TestResolvePortForwards_ConfigBeatsCompose(t *testing.T) {
       - "9000:9000"
 `)
 	cfg := Config{PortForward: []string{"13000:3000"}}
-	got, err := ResolvePortForwards(cfg, dir)
+	got, err := ResolvePortForwards(Config{}, cfg, dir)
 	if err != nil {
 		t.Fatalf("ResolvePortForwards: %v", err)
 	}
@@ -40,17 +76,17 @@ func TestResolvePortForwards_ConfigBeatsCompose(t *testing.T) {
 
 func TestResolvePortForwards_InvalidSpec(t *testing.T) {
 	t.Parallel()
-	if _, err := ResolvePortForwards(Config{PortForward: []string{"nope"}}, ""); err == nil {
+	if _, err := ResolvePortForwards(Config{}, Config{PortForward: []string{"nope"}}, ""); err == nil {
 		t.Fatal("expected error for non-numeric port spec")
 	}
-	if _, err := ResolvePortForwards(Config{PortForward: []string{"13000:999999"}}, ""); err == nil {
+	if _, err := ResolvePortForwards(Config{}, Config{PortForward: []string{"13000:999999"}}, ""); err == nil {
 		t.Fatal("expected error for out-of-range port")
 	}
 }
 
 func TestResolvePortForwards_NoSourceIsEmpty(t *testing.T) {
 	t.Parallel()
-	got, err := ResolvePortForwards(Config{}, t.TempDir())
+	got, err := ResolvePortForwards(Config{}, Config{}, t.TempDir())
 	if err != nil {
 		t.Fatalf("ResolvePortForwards: %v", err)
 	}
@@ -72,7 +108,7 @@ func TestResolvePortForwards_ComposeShortForms(t *testing.T) {
       - "127.0.0.1:5432:5432"
       - "9229:9229/tcp"
 `)
-	got, err := ResolvePortForwards(Config{}, dir)
+	got, err := ResolvePortForwards(Config{}, Config{}, dir)
 	if err != nil {
 		t.Fatalf("ResolvePortForwards: %v", err)
 	}
@@ -94,7 +130,7 @@ func TestResolvePortForwards_ComposeLongFormAndRange(t *testing.T) {
         published: 8080
       - "3000-3002:3000-3002"
 `)
-	got, err := ResolvePortForwards(Config{}, dir)
+	got, err := ResolvePortForwards(Config{}, Config{}, dir)
 	if err != nil {
 		t.Fatalf("ResolvePortForwards: %v", err)
 	}
@@ -118,7 +154,7 @@ func TestResolvePortForwards_ComposeFilePrecedence(t *testing.T) {
   a:
     ports: ["2222:2222"]
 `)
-	got, err := ResolvePortForwards(Config{}, dir)
+	got, err := ResolvePortForwards(Config{}, Config{}, dir)
 	if err != nil {
 		t.Fatalf("ResolvePortForwards: %v", err)
 	}
@@ -136,7 +172,7 @@ func TestResolvePortForwards_PodmanCompose(t *testing.T) {
   a:
     ports: ["3333:3333"]
 `)
-	got, err := ResolvePortForwards(Config{}, dir)
+	got, err := ResolvePortForwards(Config{}, Config{}, dir)
 	if err != nil {
 		t.Fatalf("ResolvePortForwards: %v", err)
 	}

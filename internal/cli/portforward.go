@@ -19,9 +19,9 @@ func newPortForwardCmd() *cobra.Command {
 		Short: "Forward configured ports from localhost to a sandbox instance",
 		Long: "Forward TCP ports from localhost to a sandbox instance and hold them\n" +
 			"open until interrupted, without opening a shell.\n\n" +
-			"Ports come from the `port-forward:` list in the project's .codebox.conf\n" +
-			"(not the global one). Each entry is LOCAL:REMOTE; a bare PORT maps that\n" +
-			"port to itself:\n\n" +
+			"Ports come from the `port-forward:` list in either .codebox.conf\n" +
+			"(project and global entries are merged, project first). Each entry is\n" +
+			"LOCAL:REMOTE; a bare PORT maps that port to itself:\n\n" +
 			"  port-forward:\n" +
 			"    - 13000:3000\n" +
 			"    - 13001:3001\n\n" +
@@ -56,11 +56,11 @@ func runPortForward(
 		return fmt.Errorf("locate current directory: %w", err)
 	}
 
-	_, project, err := settings.Load(home, workDir)
+	global, project, err := settings.Load(home, workDir)
 	if err != nil {
 		return err
 	}
-	ports, err := settings.ResolvePortForwards(project, workDir)
+	ports, err := settings.ResolvePortForwards(global, project, workDir)
 	if err != nil {
 		return err
 	}

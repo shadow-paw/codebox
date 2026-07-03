@@ -47,11 +47,11 @@ func newGitPushCmd() *cobra.Command {
 			"      e.g. `main:issue-1234`. No source remote and no local fetch;\n" +
 			"      the named local branch is pushed straight to\n" +
 			"      refs/heads/target_branch on the instance.\n\n" +
-			"The source side may be omitted when `git.push-from` is set in the\n" +
-			"project's .codebox.conf: write `:target_branch` (or, with REFSPEC\n" +
-			"left off entirely, just `codebox git push INSTANCE`, which targets\n" +
-			"a branch named after the instance) and the configured source is\n" +
-			"filled in.\n\n" +
+			"The source side may be omitted when `git.push-from` is set in a\n" +
+			".codebox.conf (the project file, else the global one): write\n" +
+			"`:target_branch` (or, with REFSPEC left off entirely, just\n" +
+			"`codebox git push INSTANCE`, which targets a branch named after\n" +
+			"the instance) and the configured source is filled in.\n\n" +
 			"In every form target_branch is checked out at ~/source inside\n" +
 			"the sandbox after the push.",
 		Args:              cobra.RangeArgs(1, 2),
@@ -107,7 +107,7 @@ func runGitPush(
 	if err := requireGitCwd(); err != nil {
 		return err
 	}
-	pushSource, err := projectPushSource(home)
+	pushSource, err := configuredPushSource(home)
 	if err != nil {
 		return err
 	}
@@ -149,22 +149,25 @@ func runGitPull(
 	})
 }
 
-// projectPushSource returns the `git.push-from` default from the project's
-// .codebox.conf (the working directory's config; the global file is
-// ignored, matching port-forward). It is the source side filled into a
-// push refspec when the operator omits it. An empty string means no
-// default is configured — the callers turn that into a clear error only
-// if the operator actually omitted the source.
-func projectPushSource(home string) (string, error) {
+// configuredPushSource returns the `git.push-from` default, taken from
+// the project's .codebox.conf when set and otherwise from the global
+// ~/.codebox.conf. It is the source side filled into a push refspec when
+// the operator omits it. An empty string means no default is configured
+// — the callers turn that into a clear error only if the operator
+// actually omitted the source.
+func configuredPushSource(home string) (string, error) {
 	workDir, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("locate current directory: %w", err)
 	}
-	_, project, err := settings.Load(home, workDir)
+	global, project, err := settings.Load(home, workDir)
 	if err != nil {
 		return "", err
 	}
-	return project.Git.Push, nil
+	if project.Git.Push != "" {
+		return project.Git.Push, nil
+	}
+	return global.Git.Push, nil
 }
 
 // requireGitCwd confirms the operator's current working directory is

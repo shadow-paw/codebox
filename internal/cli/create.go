@@ -161,9 +161,9 @@ func registerCreateValueCompletions(cmd *cobra.Command) {
 }
 
 // builderAdditionalRun loads the global and project .codebox.conf files
-// and returns their merged builder.additional-run steps (global first,
-// then project). It is the create/workflow counterpart to
-// projectPushSource: builder.additional-run is structured data, not a
+// and returns their merged builder.additional-run steps (project first,
+// then global). It is the create/workflow counterpart to
+// configuredPushSource: builder.additional-run is structured data, not a
 // flag, so it cannot ride the args-injection path and is read here
 // instead.
 func builderAdditionalRun(home string) ([]string, error) {

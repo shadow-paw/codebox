@@ -19,9 +19,9 @@ type Config struct {
 
 	// PortForward lists the forwards `codebox port-forward` sets up,
 	// each a "LOCAL:REMOTE" string (a bare "PORT" maps a port to
-	// itself). It is read from the project config only — a global
-	// .codebox.conf entry is ignored, since forwards are inherently
-	// per-project. See ResolvePortForwards.
+	// itself). Both the global and project configs contribute: the
+	// lists are merged project-first, then global, and deduplicated.
+	// See ResolvePortForwards.
 	PortForward []string `yaml:"port-forward"`
 
 	// Builder holds custom image-build steps. AdditionalRun lists shell
@@ -43,8 +43,8 @@ type Config struct {
 		// used by `codebox workflow` and `codebox git push` when the
 		// operator omits the source. With `push-from: origin/main`,
 		// `codebox workflow issue-1234` behaves like
-		// `codebox workflow origin/main:issue-1234`. Read from the
-		// project config only, like PortForward.
+		// `codebox workflow origin/main:issue-1234`. The project config
+		// wins when set; otherwise the global config's value is used.
 		Push string `yaml:"push-from"`
 	} `yaml:"git"`
 }

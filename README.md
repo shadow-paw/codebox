@@ -205,8 +205,8 @@ codebox workflow origin/main:issue-1234 --claude=false   # skip the Claude insta
 ```
 > HINT: You can run multiple sandboxes at the same time.
 
-To reach services running inside a sandbox, declare the forwards in the
-project `.codebox.conf` (`local:remote`, or a bare port for `port:port`):
+To reach services running inside a sandbox, declare the forwards in a
+`.codebox.conf` (`local:remote`, or a bare port for `port:port`):
 ```yaml
 port-forward:
   - 13000:3000

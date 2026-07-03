@@ -32,10 +32,10 @@ args:
 builder:
   additional-run: # custom RUN steps appended to the generated image build
     - ...
-port-forward:     # project-only: forwards for `codebox port-forward`
+port-forward:     # forwards for `codebox port-forward`
   - ...
 git:
-  push-from: ...  # project-only: default push source for workflow / git push
+  push-from: ...  # default push source for workflow / git push
 ```
 
 Flag entries are written **without** the leading `--`. A boolean flag is
@@ -138,11 +138,10 @@ Because a `RUN` is not a login shell, address tools the toolchains
 install by absolute path (e.g. `/home/user/.local/bin/uv`) rather than
 relying on the in-container user's `PATH`.
 
-Unlike `port-forward` and `git.push`, this key is **not** project-only:
-the global `~/.codebox.conf` and the project `./.codebox.conf` both
-contribute. The global steps run first, then the project steps — so an
-org-wide global file can seed common tooling while each project appends
-its own on top. Blank list entries are ignored.
+The global `~/.codebox.conf` and the project `./.codebox.conf` both
+contribute. The project steps run first, then the global steps — so a
+project's own tooling lands before the org-wide global steps that follow
+it. Blank list entries are ignored.
 
 The commands are run verbatim, so a typo surfaces as an image-build
 failure rather than a config error. `codebox create` echoes the full
@@ -167,11 +166,12 @@ port-forward:
 codebox port-forward demo    # hold these forwards open until Ctrl-C
 ```
 
-This key is **project-only**: a `port-forward:` list in the global
-`~/.codebox.conf` is ignored, since forwards are inherently
-per-project. When the project config has no `port-forward:` list and a
-compose file is present in the current directory, `codebox port-forward`
-auto-detects the compose services' published ports instead — see the
+Both configs contribute: a `port-forward:` list in the global
+`~/.codebox.conf` and one in the project `./.codebox.conf` are merged
+(project entries first, then global) and deduplicated. When neither
+config has a `port-forward:` list and a compose file is present in the
+current directory, `codebox port-forward` auto-detects the compose
+services' published ports instead — see the
 [`codebox port-forward`](command.md) reference for the auto-detection
 rules.
 
@@ -204,8 +204,9 @@ A refspec that already carries its own source (`upstream/dev:work`,
 omitted and no `git.push-from` is configured, the command fails and tells you
 to pass an explicit source.
 
-Like `port-forward`, this key is **project-only**: a `git.push-from` entry in
-the global `~/.codebox.conf` is ignored.
+Both configs contribute, but this key is a single value rather than a
+list, so it does not merge: the project's `git.push-from` wins when set,
+and the global `~/.codebox.conf` value is used only as a fallback.
 
 ## Precedence
 
@@ -224,9 +225,15 @@ explicit CLI flag  >  project .codebox.conf  >  global ~/.codebox.conf
   `node=25` in the project beats `node=24` in the global file).
 - **Otherwise they merge.** Flags set in only one file are all applied.
 
-This precedence governs the flag sections. `builder.additional-run` is
-not a flag and does not override: the global and project lists are
-concatenated (global first), so both always apply.
+This precedence governs the flag sections. The remaining keys are not
+flags and follow their own rules:
+
+- **List keys merge, project-first.** `builder.additional-run` and
+  `port-forward` concatenate the project list ahead of the global one
+  (`port-forward` also deduplicates), so both files always contribute
+  and the project's entries come first.
+- **`git.push-from` is a single value.** The project's value wins when
+  set; the global value is only a fallback.
 
 ## A complete example
 

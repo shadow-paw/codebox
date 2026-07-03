@@ -26,17 +26,18 @@ var composeNames = []string{
 }
 
 // ResolvePortForwards returns the normalized "LOCAL:REMOTE" forward
-// specs for `codebox port-forward`. When the project config carries a
-// port-forward: list those entries are used (each normalized so a bare
-// "PORT" becomes "PORT:PORT"). Otherwise, when a compose file is
-// present in workDir, its published ports are auto-detected and each is
-// mapped to itself ("PORT:PORT") so localhost:PORT reaches the port the
-// container publishes inside the instance. Returns an empty slice when
-// neither source yields a port; the caller decides whether that is an
-// error.
-func ResolvePortForwards(project Config, workDir string) ([]string, error) {
-	if len(project.PortForward) > 0 {
-		return normalizePortSpecs(project.PortForward)
+// specs for `codebox port-forward`. When either config carries a
+// port-forward: list those entries are used, merged project-first then
+// global and deduplicated (each normalized so a bare "PORT" becomes
+// "PORT:PORT"). Otherwise, when a compose file is present in workDir,
+// its published ports are auto-detected and each is mapped to itself
+// ("PORT:PORT") so localhost:PORT reaches the port the container
+// publishes inside the instance. Returns an empty slice when neither
+// source yields a port; the caller decides whether that is an error.
+func ResolvePortForwards(global, project Config, workDir string) ([]string, error) {
+	if len(project.PortForward) > 0 || len(global.PortForward) > 0 {
+		merged := append(append([]string{}, project.PortForward...), global.PortForward...)
+		return normalizePortSpecs(merged)
 	}
 	if workDir == "" {
 		return nil, nil

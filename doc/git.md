@@ -121,8 +121,9 @@ or rename the branch locally before pushing.
 
 ### Omitting the source: `git.push-from`
 
-When a project always starts sandboxes from the same upstream, set the
-source once in the project's `.codebox.conf` and leave it off the
+When you always start sandboxes from the same upstream, set the source
+once in a `.codebox.conf` — the project file, or the global
+`~/.codebox.conf` as a cross-project default — and leave it off the
 command line:
 
 ```yaml

@@ -7,15 +7,15 @@ import (
 	"testing"
 )
 
-// TestResolveAdditionalRun pins the merge contract: global steps run
-// first, then project steps, and blank entries are dropped.
+// TestResolveAdditionalRun pins the merge contract: project steps run
+// first, then global steps, and blank entries are dropped.
 func TestResolveAdditionalRun(t *testing.T) {
 	var global, project Config
 	global.Builder.AdditionalRun = []string{"echo global", "  "}
 	project.Builder.AdditionalRun = []string{"", "echo project"}
 
 	got := ResolveAdditionalRun(global, project)
-	want := []string{"echo global", "echo project"}
+	want := []string{"echo project", "echo global"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("ResolveAdditionalRun = %v, want %v", got, want)
 	}
