@@ -1119,9 +1119,9 @@ func TestGenerate_EmptyKeyIsRejected(t *testing.T) {
 
 // TestGenerate_AdditionalRunSteps pins the builder.additional-run
 // layer: each command becomes its own RUN emitted verbatim (as root, no
-// bash wrapper), and the block sits before the operator-key install so
-// the custom steps run while the toolchains are present but before the
-// key is written.
+// bash wrapper), and the block sits last — after the operator-key
+// install — so the custom steps run once everything else codebox lays
+// down is in place.
 func TestGenerate_AdditionalRunSteps(t *testing.T) {
 	t.Parallel()
 	out := generateOpts(t, image.Options{
@@ -1139,12 +1139,14 @@ func TestGenerate_AdditionalRunSteps(t *testing.T) {
 	if strings.Contains(out, "bash -lc") {
 		t.Fatalf("additional-run steps must not be wrapped in a bash login shell:\n%s", out)
 	}
-	// The custom step precedes the operator-key install.
+	// The custom step follows the operator-key install and precedes
+	// EXPOSE, so it is the last build layer before EXPOSE/CMD.
 	who := strings.Index(out, "RUN echo $(whoami)")
 	key := strings.Index(out, "# Install the operator's public key.")
-	if !(who < key) {
-		t.Fatalf("additional-run step must precede the operator key (who=%d key=%d):\n%s",
-			who, key, out)
+	expose := strings.Index(out, "EXPOSE 2222")
+	if key >= who || who >= expose {
+		t.Fatalf("additional-run step must follow the operator key and precede EXPOSE "+
+			"(key=%d who=%d expose=%d):\n%s", key, who, expose, out)
 	}
 }
 

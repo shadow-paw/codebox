@@ -122,11 +122,11 @@ builder:
     - echo $(whoami)
 ```
 
-The steps are emitted in the **late build stage**: after the toolchains,
-agents, and tools the flags requested are installed, and before the
-operator's SSH key is added. Each command is written out verbatim as its
-own `RUN` and runs as **root**, the same as the install layers above —
-so a step that pulls system packages needs no `sudo`:
+The steps are emitted **last**: after the toolchains, agents, and tools
+the flags requested are installed, and after the operator's SSH key is
+added — only `EXPOSE`/`CMD` follow. Each command is written out verbatim
+as its own `RUN` and runs as **root**, the same as the install layers
+above — so a step that pulls system packages needs no `sudo`:
 
 ```yaml
 builder:

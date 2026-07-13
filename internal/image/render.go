@@ -119,12 +119,12 @@ func render(s spec, authKey string, opts Options) string {
 
 	renderExtras(&b, s, opts)
 
-	renderAdditionalRun(&b, opts.AdditionalRun)
-
 	b.WriteString("# Install the operator's public key.\n")
 	b.WriteString("RUN install -d -m 0700 -o user -g user /home/user/.ssh\n")
 	runWriteFile(&b, "/home/user/.ssh/authorized_keys", authKey, "user:user", "0600")
 	b.WriteString("\n")
+
+	renderAdditionalRun(&b, opts.AdditionalRun)
 
 	b.WriteString("EXPOSE 2222\n\n")
 	b.WriteString(`CMD ["/usr/local/bin/codebox-init"]` + "\n")
@@ -208,12 +208,13 @@ func renderExtras(b *strings.Builder, s spec, opts Options) {
 }
 
 // renderAdditionalRun appends the operator's custom build steps from the
-// builder.additional-run config. The block sits after the toolchain,
-// agent, and tool layers and before the operator-key install, so the
-// just-installed software is present when the commands run. Each entry
-// becomes its own RUN emitted verbatim and executed as root — the
-// default build context at this point — matching the other install
-// layers, which also run as root and address files by absolute path.
+// builder.additional-run config. The block sits last — after the
+// toolchain, agent, and tool layers and after the operator-key install —
+// so every piece codebox lays down is present when the commands run, and
+// EXPOSE/CMD are the only instructions that follow. Each entry becomes
+// its own RUN emitted verbatim and executed as root — the default build
+// context at this point — matching the other install layers, which also
+// run as root and address files by absolute path.
 func renderAdditionalRun(b *strings.Builder, cmds []string) {
 	if len(cmds) == 0 {
 		return
