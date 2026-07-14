@@ -35,3 +35,6 @@ build: ## Build the codebox binary into ./bin.
 
 clean: ## Remove build artifacts.
 	rm -rf bin/$(BIN)
+
+install:
+	sudo install -m 0755 bin/codebox /usr/local/bin/codebox
