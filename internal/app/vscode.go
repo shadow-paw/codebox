@@ -35,7 +35,7 @@ type VSCodeRequest struct {
 	Instance           string
 	Orchestrator       string
 	Remote             string
-	InstanceKey        string
+	InstanceKeys       []string
 	InsideVSCodeRemote bool
 	InsideSSHRemote    bool
 }
@@ -122,8 +122,8 @@ func (a *App) vscodeRemote(
 			req.Instance, instancePort)
 	}
 
-	keyPath := expandHome(req.InstanceKey, a.home)
-	workspace := a.detectWorkspace(ctx, req.Remote, hostPort, keyPath)
+	keyPaths := expandHomeAll(req.InstanceKeys, a.home)
+	workspace := a.detectWorkspace(ctx, req.Remote, hostPort, keyPaths)
 
 	uriFlag := "--folder-uri"
 	remotePath := instanceSourceAbs()
@@ -134,7 +134,7 @@ func (a *App) vscodeRemote(
 
 	authority := fmt.Sprintf("%s@localhost:%s", instanceUser, hostPort)
 	if req.Remote != "" {
-		alias, err := a.ensureVSCodeSSHHost(req.Instance, hostPort, keyPath, req.Remote)
+		alias, err := a.ensureVSCodeSSHHost(req.Instance, hostPort, keyPaths, req.Remote)
 		if err != nil {
 			return err
 		}
@@ -173,7 +173,7 @@ func (a *App) vscodeMounted(ctx context.Context, stdout, stderr io.Writer, req V
 			Instance:     req.Instance,
 			Orchestrator: req.Orchestrator,
 			Remote:       req.Remote,
-			InstanceKey:  req.InstanceKey,
+			InstanceKeys: req.InstanceKeys,
 		}); err != nil {
 			return err
 		}
@@ -194,9 +194,9 @@ func (a *App) vscodeMounted(ctx context.Context, stdout, stderr io.Writer, req V
 // takes the first match. A lookup failure is treated as "no workspace
 // file" — the directory is opened instead — so a transient error never
 // blocks opening the editor.
-func (a *App) detectWorkspace(ctx context.Context, remote, hostPort, keyPath string) string {
+func (a *App) detectWorkspace(ctx context.Context, remote, hostPort string, keyPaths []string) string {
 	inner := fmt.Sprintf("ls -1 ~/%s/*.code-workspace 2>/dev/null | head -n 1", instanceSourceDir)
-	cmd := buildInstanceSSHCommand(remote, hostPort, keyPath, inner)
+	cmd := buildInstanceSSHCommand(remote, hostPort, keyPaths, inner)
 	var out bytes.Buffer
 	if err := a.runners("").Run(ctx, cmd, nil, &out, io.Discard); err != nil {
 		return ""
@@ -304,9 +304,9 @@ func vscodeBlockMarkers(instance string) (begin, end string) {
 // has to live in config. The block mirrors the options codebox passes on
 // its own ssh command lines — StrictHostKeyChecking off plus a throwaway
 // known_hosts, since the localhost:<port> target is reused across
-// instances and would otherwise trip a host-key mismatch — and adds the
-// IdentityFile only when --instance-key was supplied.
-func (a *App) ensureVSCodeSSHHost(instance, hostPort, keyPath, remote string) (string, error) {
+// instances and would otherwise trip a host-key mismatch — and adds one
+// IdentityFile per --instance-key supplied.
+func (a *App) ensureVSCodeSSHHost(instance, hostPort string, keyPaths []string, remote string) (string, error) {
 	sshDir := filepath.Join(a.home, ".ssh")
 	if err := os.MkdirAll(sshDir, 0o700); err != nil {
 		return "", fmt.Errorf("create %s: %w", sshDir, err)
@@ -314,7 +314,7 @@ func (a *App) ensureVSCodeSSHHost(instance, hostPort, keyPath, remote string) (s
 
 	alias := vscodeSSHAlias(instance)
 	begin, end := vscodeBlockMarkers(instance)
-	block := buildVSCodeSSHBlock(begin, end, alias, hostPort, keyPath, remote)
+	block := buildVSCodeSSHBlock(begin, end, alias, hostPort, keyPaths, remote)
 
 	if err := upsertManagedBlock(filepath.Join(sshDir, vscodeIncludeFile), begin, end, block); err != nil {
 		return "", err
@@ -329,7 +329,7 @@ func (a *App) ensureVSCodeSSHHost(instance, hostPort, keyPath, remote string) (s
 // spaces (the IdentityFile path) are double-quoted, the form ssh_config
 // uses for quoting; the alias, port, user and bastion are single tokens.
 // The login is always the unprivileged in-container user (instanceUser).
-func buildVSCodeSSHBlock(begin, end, alias, hostPort, keyPath, remote string) string {
+func buildVSCodeSSHBlock(begin, end, alias, hostPort string, keyPaths []string, remote string) string {
 	var b strings.Builder
 	_, _ = fmt.Fprintf(&b, "%s\n", begin)
 	_, _ = fmt.Fprintf(&b, "Host %s\n", alias)
@@ -338,8 +338,14 @@ func buildVSCodeSSHBlock(begin, end, alias, hostPort, keyPath, remote string) st
 	_, _ = fmt.Fprintf(&b, "    User %s\n", instanceUser)
 	_, _ = fmt.Fprintf(&b, "    StrictHostKeyChecking no\n")
 	_, _ = fmt.Fprintf(&b, "    UserKnownHostsFile /dev/null\n")
-	if keyPath != "" {
-		_, _ = fmt.Fprintf(&b, "    IdentityFile %q\n", keyPath)
+	hasKey := false
+	for _, k := range keyPaths {
+		if k != "" {
+			_, _ = fmt.Fprintf(&b, "    IdentityFile %q\n", k)
+			hasKey = true
+		}
+	}
+	if hasKey {
 		_, _ = fmt.Fprintf(&b, "    IdentitiesOnly yes\n")
 	}
 	_, _ = fmt.Fprintf(&b, "    ProxyJump %s\n", remote)

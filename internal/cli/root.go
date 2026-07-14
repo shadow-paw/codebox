@@ -37,8 +37,8 @@ func newRootCmd() *cobra.Command {
 		"Container orchestrator (podman, docker)")
 	pf.String("remote", "",
 		"Target a remote host running the orchestrator (user@host); default is local")
-	pf.String("instance-key", "",
-		"SSH key for logging into the instance (auto-detected if omitted)")
+	pf.StringSlice("instance-key", nil,
+		"SSH key(s) for logging into the instance (repeat or comma-separate for multiple; auto-detected if omitted)")
 	_ = root.RegisterFlagCompletionFunc("orchestrator",
 		staticCompletion(app.SupportedOrchestrators()))
 
@@ -68,13 +68,13 @@ func newRootCmd() *cobra.Command {
 type commonOpts struct {
 	orchestrator string
 	remote       string
-	instanceKey  string
+	instanceKeys []string
 }
 
 func readCommonOpts(cmd *cobra.Command) commonOpts {
 	f := cmd.Flags()
 	o, _ := f.GetString("orchestrator")
 	r, _ := f.GetString("remote")
-	k, _ := f.GetString("instance-key")
-	return commonOpts{orchestrator: o, remote: r, instanceKey: k}
+	k, _ := f.GetStringSlice("instance-key")
+	return commonOpts{orchestrator: o, remote: r, instanceKeys: k}
 }

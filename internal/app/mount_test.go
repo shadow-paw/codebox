@@ -132,7 +132,7 @@ func TestMount_RemoteAddsProxyJumpAndKey(t *testing.T) {
 			Instance:     "demo",
 			Orchestrator: "podman",
 			Remote:       "ops@bastion",
-			InstanceKey:  "/keys/id_rsa",
+			InstanceKeys: []string{"/keys/id_rsa"},
 		})
 	if err != nil {
 		t.Fatalf("Mount: %v", err)

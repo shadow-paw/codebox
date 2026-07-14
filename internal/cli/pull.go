@@ -56,7 +56,7 @@ func runPull(
 		Instance:     instance,
 		Orchestrator: opts.orchestrator,
 		Remote:       opts.remote,
-		InstanceKey:  opts.instanceKey,
+		InstanceKeys: opts.instanceKeys,
 		InstancePath: opts.instancePath,
 		LocalPath:    opts.localPath,
 	})

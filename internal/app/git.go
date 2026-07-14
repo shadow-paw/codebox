@@ -27,7 +27,7 @@ type GitPushRequest struct {
 	Instance     string
 	Orchestrator string
 	Remote       string
-	InstanceKey  string
+	InstanceKeys []string
 	Refspec      string
 
 	// PushSource is the project-configured default source (git.push-from
@@ -45,7 +45,7 @@ type GitPullRequest struct {
 	Instance     string
 	Orchestrator string
 	Remote       string
-	InstanceKey  string
+	InstanceKeys []string
 	Branch       string
 }
 
@@ -113,12 +113,12 @@ func (a *App) GitPush(ctx context.Context, stdout, stderr io.Writer, req GitPush
 	}
 
 	local := a.runners("")
-	keyPath := expandHome(req.InstanceKey, a.home)
+	keyPaths := expandHomeAll(req.InstanceKeys, a.home)
 
 	name := readGitConfig(ctx, local, "user.name")
 	email := readGitConfig(ctx, local, "user.email")
 
-	initCmd := buildInstanceSSHCommand(req.Remote, hostPort, keyPath,
+	initCmd := buildInstanceSSHCommand(req.Remote, hostPort, keyPaths,
 		instanceInitScript(name, email))
 	_, _ = fmt.Fprintf(stdout, "Ensuring ~/%s exists on instance...\n", instanceSourceDir)
 	if err := local.Run(ctx, initCmd, nil, stdout, stderr); err != nil {
@@ -141,7 +141,7 @@ func (a *App) GitPush(ctx context.Context, stdout, stderr io.Writer, req GitPush
 
 	pushRefspec := fmt.Sprintf("%s:refs/heads/%s", pushSource, targetBranch)
 	pushCmd := buildGitTransportCommand("push", remoteName, pushRefspec,
-		req.Remote, keyPath)
+		req.Remote, keyPaths)
 	writeGitBlock(stdout, pushCmd)
 	if err := local.Run(ctx, pushCmd, nil, stdout, stderr); err != nil {
 		return wrapRunErr("git push", err, nil)
@@ -150,7 +150,7 @@ func (a *App) GitPush(ctx context.Context, stdout, stderr io.Writer, req GitPush
 	checkoutInner := fmt.Sprintf("cd %s && git checkout %s",
 		shquote(instanceSourceAbs()),
 		shquote(targetBranch))
-	checkoutCmd := buildInstanceSSHCommand(req.Remote, hostPort, keyPath, checkoutInner)
+	checkoutCmd := buildInstanceSSHCommand(req.Remote, hostPort, keyPaths, checkoutInner)
 	_, _ = fmt.Fprintf(stdout, "Checking out %q on instance...\n", targetBranch)
 	if err := local.Run(ctx, checkoutCmd, nil, stdout, stderr); err != nil {
 		return wrapRunErr("git checkout on instance", err, nil)
@@ -266,7 +266,7 @@ func (a *App) GitPull(ctx context.Context, stdout, stderr io.Writer, req GitPull
 	}
 
 	local := a.runners("")
-	keyPath := expandHome(req.InstanceKey, a.home)
+	keyPaths := expandHomeAll(req.InstanceKeys, a.home)
 	remoteName := instanceRemoteName(req.Instance)
 	if err := setLocalRemote(ctx, local, remoteName,
 		instanceRemoteURL(hostPort)); err != nil {
@@ -274,7 +274,7 @@ func (a *App) GitPull(ctx context.Context, stdout, stderr io.Writer, req GitPull
 	}
 
 	fetchCmd := buildGitTransportCommand("fetch", remoteName, branch,
-		req.Remote, keyPath)
+		req.Remote, keyPaths)
 	writeGitBlock(stdout, fetchCmd)
 	if err := local.Run(ctx, fetchCmd, nil, stdout, stderr); err != nil {
 		return wrapRunErr("git fetch", err, nil)
@@ -351,11 +351,9 @@ func instanceInitScript(name, email string) string {
 // the in-container sshd. Mirrors exec's transport shape: -i KEY for
 // the inner hop only, -J Remote when the orchestrator host is reached
 // via a bastion.
-func buildInstanceSSHCommand(remote, hostPort, instanceKey, inner string) string {
+func buildInstanceSSHCommand(remote, hostPort string, instanceKeys []string, inner string) string {
 	parts := []string{"ssh", "-o", "StrictHostKeyChecking=no"}
-	if instanceKey != "" {
-		parts = append(parts, "-i", shquote(instanceKey))
-	}
+	parts = appendIdentityArgs(parts, instanceKeys)
 	if remote != "" {
 		parts = append(parts, "-J", shquote(remote))
 	}
@@ -371,8 +369,8 @@ func buildInstanceSSHCommand(remote, hostPort, instanceKey, inner string) string
 // <name> <arg>` where <verb> is push or fetch. The remote URL stored
 // in .git/config does not encode `-i` / `-J`; those options live on
 // GIT_SSH_COMMAND so they apply only when codebox invokes git.
-func buildGitTransportCommand(verb, name, arg, remote, instanceKey string) string {
-	ssh := buildGitInnerSSH(remote, instanceKey)
+func buildGitTransportCommand(verb, name, arg, remote string, instanceKeys []string) string {
+	ssh := buildGitInnerSSH(remote, instanceKeys)
 	return fmt.Sprintf("GIT_SSH_COMMAND=%s git %s %s %s",
 		shquote(ssh), verb, shquote(name), shquote(arg))
 }
@@ -380,11 +378,9 @@ func buildGitTransportCommand(verb, name, arg, remote, instanceKey string) strin
 // buildGitInnerSSH returns the ssh command-string git invokes when
 // talking to the instance. No `-p` is included: the port is part of
 // the URL git was handed by the operator's local config.
-func buildGitInnerSSH(remote, instanceKey string) string {
+func buildGitInnerSSH(remote string, instanceKeys []string) string {
 	parts := []string{"ssh", "-o", "StrictHostKeyChecking=no"}
-	if instanceKey != "" {
-		parts = append(parts, "-i", shquote(instanceKey))
-	}
+	parts = appendIdentityArgs(parts, instanceKeys)
 	if remote != "" {
 		parts = append(parts, "-J", shquote(remote))
 	}

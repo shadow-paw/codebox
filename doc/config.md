@@ -69,6 +69,19 @@ args:
 With that in place, `codebox list` runs as if you had typed
 `codebox --orchestrator=docker --remote=me@build-box.internal list`.
 
+`--instance-key` accepts several keys, comma-separated in a single
+entry. Every listed key's public side is installed into the instance's
+`authorized_keys` at create time, so the same sandbox is reachable from
+each machine; at connect time each key is offered to ssh, and whichever
+private key exists locally is the one used:
+
+```yaml
+# ~/.codebox.conf
+args:
+  all:
+    - instance-key=~/.ssh/id_ed25519,~/.ssh/id_work_laptop
+```
+
 ## `args.create` — flags for `create` and `workflow`
 
 Entries under `args.create` are inserted right after the `create` token.

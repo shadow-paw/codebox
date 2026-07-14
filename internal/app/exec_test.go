@@ -101,7 +101,7 @@ func TestExec_InstanceKeyExpandsHomeAndAddsDashI(t *testing.T) {
 		app.ExecRequest{
 			Instance:     "demo",
 			Orchestrator: "podman",
-			InstanceKey:  "~/.ssh/id_ed25519",
+			InstanceKeys: []string{"~/.ssh/id_ed25519"},
 			Command:      "ls",
 		})
 	if err != nil {
@@ -130,7 +130,7 @@ func TestExec_InstanceKeyOnlyOnInnerSSH(t *testing.T) {
 			Instance:     "demo",
 			Orchestrator: "podman",
 			Remote:       "ops@bastion",
-			InstanceKey:  "/keys/id_rsa",
+			InstanceKeys: []string{"/keys/id_rsa"},
 			Command:      "ls",
 		})
 	if err != nil {

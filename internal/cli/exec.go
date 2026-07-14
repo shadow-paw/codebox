@@ -64,7 +64,7 @@ func runExec(
 		Instance:     instance,
 		Orchestrator: opts.orchestrator,
 		Remote:       opts.remote,
-		InstanceKey:  opts.instanceKey,
+		InstanceKeys: opts.instanceKeys,
 		Command:      command,
 		Args:         innerArgs,
 	})

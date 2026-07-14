@@ -116,7 +116,7 @@ func TestPush_InstanceKeyOnlyOnInnerSSH(t *testing.T) {
 			Instance:     "demo",
 			Orchestrator: "podman",
 			Remote:       "ops@bastion",
-			InstanceKey:  "/keys/id_rsa",
+			InstanceKeys: []string{"/keys/id_rsa"},
 			LocalPath:    "./payload",
 			InstancePath: "/in",
 		})
@@ -147,7 +147,7 @@ func TestPush_InstanceKeyExpandsHome(t *testing.T) {
 		app.PushRequest{
 			Instance:     "demo",
 			Orchestrator: "podman",
-			InstanceKey:  "~/.ssh/id_ed25519",
+			InstanceKeys: []string{"~/.ssh/id_ed25519"},
 			LocalPath:    "~/payload",
 			InstancePath: "/in",
 		})
@@ -352,7 +352,7 @@ func TestPull_RemoteWithKey(t *testing.T) {
 			Instance:     "demo",
 			Orchestrator: "podman",
 			Remote:       "ops@bastion",
-			InstanceKey:  "/keys/id_rsa",
+			InstanceKeys: []string{"/keys/id_rsa"},
 			InstancePath: "/workspace/out",
 			LocalPath:    "./results",
 		})

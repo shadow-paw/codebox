@@ -253,7 +253,7 @@ func TestShell_InstanceKeyExpandsHomeAndAddsDashI(t *testing.T) {
 		app.ShellRequest{
 			Instance:     "demo",
 			Orchestrator: "podman",
-			InstanceKey:  "~/.ssh/id_ed25519",
+			InstanceKeys: []string{"~/.ssh/id_ed25519"},
 		})
 	if err != nil {
 		t.Fatalf("Shell: %v", err)
@@ -262,6 +262,34 @@ func TestShell_InstanceKeyExpandsHomeAndAddsDashI(t *testing.T) {
 		"'cd ~/source 2>/dev/null; exec ${SHELL:-/bin/sh} -l'"
 	if fr.calls[3].cmd != wantSSH {
 		t.Errorf("ssh command mismatch:\n got: %q\nwant: %q", fr.calls[3].cmd, wantSSH)
+	}
+}
+
+// TestShell_MultipleInstanceKeysAddDashIEach pins that every
+// --instance-key becomes its own `-i` on the inner ssh, so whichever
+// machine's private key is present locally can authenticate.
+func TestShell_MultipleInstanceKeysAddDashIEach(t *testing.T) {
+	t.Parallel()
+	a, fr := newApp(t,
+		&stubKeys{key: "k"},
+		reply{stdout: "demo\n"},
+		reply{stdout: ""}, // tmux label — disabled
+		reply{stdout: "[::]:33000\n"},
+		reply{},
+	)
+
+	err := a.Shell(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, &bytes.Buffer{},
+		app.ShellRequest{
+			Instance:     "demo",
+			Orchestrator: "podman",
+			InstanceKeys: []string{"~/.ssh/id_ed25519", "/keys/desktop"},
+		})
+	if err != nil {
+		t.Fatalf("Shell: %v", err)
+	}
+	got := fr.calls[3].cmd
+	if !strings.Contains(got, "-i '/home/op/.ssh/id_ed25519' -i '/keys/desktop'") {
+		t.Errorf("ssh command should carry one -i per key:\n got: %q", got)
 	}
 }
 
@@ -317,7 +345,7 @@ func TestShell_CombinesKeyJumpAndForwards(t *testing.T) {
 			Instance:     "demo",
 			Orchestrator: "podman",
 			Remote:       "ops@bastion",
-			InstanceKey:  "/keys/id_rsa",
+			InstanceKeys: []string{"/keys/id_rsa"},
 			Ports:        []string{"8000:3000"},
 		})
 	if err != nil {

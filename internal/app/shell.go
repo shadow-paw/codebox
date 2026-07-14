@@ -19,7 +19,7 @@ type ShellRequest struct {
 	Instance     string
 	Orchestrator string
 	Remote       string
-	InstanceKey  string
+	InstanceKeys []string
 	Ports        []string
 }
 
@@ -31,10 +31,10 @@ type ShellRequest struct {
 //
 // When Remote is set, the orchestrator lookups run via ssh to the
 // orchestrator host; the operator's normal ssh configuration is used
-// (InstanceKey is **not** passed to that outer ssh). The
+// (InstanceKeys are **not** passed to that outer ssh). The
 // container-bound ssh always runs locally and adds `-J Remote` so
-// `localhost` resolves on the orchestrator host. InstanceKey, when
-// supplied, is passed as `-i` to that inner ssh.
+// `localhost` resolves on the orchestrator host. Each InstanceKeys
+// entry, when supplied, is passed as `-i` to that inner ssh.
 func (a *App) Shell(
 	ctx context.Context,
 	stdin io.Reader,
@@ -70,7 +70,7 @@ func (a *App) Shell(
 	}
 
 	sshCmd := buildShellSSHCommand(req.Remote, hostPort,
-		expandHome(req.InstanceKey, a.home), req.Ports, tmux, agent)
+		expandHomeAll(req.InstanceKeys, a.home), req.Ports, tmux, agent)
 
 	return a.runners("").Run(ctx, sshCmd, stdin, stdout, stderr)
 }
@@ -160,11 +160,9 @@ func parsePortLines(s string) string {
 // When tmux is true the remote command launches tmux (with a horizontal
 // split) instead of a bare login shell; a non-empty agent is run in the
 // right-hand pane. See shellRemoteCommand.
-func buildShellSSHCommand(remote, hostPort, instanceKey string, ports []string, tmux bool, agent string) string {
+func buildShellSSHCommand(remote, hostPort string, instanceKeys []string, ports []string, tmux bool, agent string) string {
 	parts := []string{"ssh", "-t", "-o", "StrictHostKeyChecking=no"}
-	if instanceKey != "" {
-		parts = append(parts, "-i", shquote(instanceKey))
-	}
+	parts = appendIdentityArgs(parts, instanceKeys)
 	for _, p := range ports {
 		l, r, ok := strings.Cut(p, ":")
 		if !ok || l == "" || r == "" {
@@ -221,6 +219,20 @@ func shellRemoteCommand(tmux bool, agent string) string {
 // stable name lets a reconnecting operator resume the same session
 // rather than stacking up a new one on every shell.
 const tmuxSession = "main"
+
+// appendIdentityArgs appends an `-i <key>` pair for every non-empty
+// instance key. ssh accepts repeated -i options and tries each identity
+// in turn, so an operator whose config lists the keys of several
+// machines still connects with whichever private key is present
+// locally.
+func appendIdentityArgs(parts, instanceKeys []string) []string {
+	for _, k := range instanceKeys {
+		if k != "" {
+			parts = append(parts, "-i", shquote(k))
+		}
+	}
+	return parts
+}
 
 // shquote single-quotes s for safe embedding in a `sh -c` command.
 // Mirrors container.shquote; duplicated here so the app layer does

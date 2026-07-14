@@ -28,7 +28,7 @@ codebox [command] [flags] [arguments]
 | ---------------- | -------- | -------- | ----- |
 | `--orchestrator` | enum     | `podman` | One of `podman`, `docker`. |
 | `--remote`       | string   | *(unset)* | `user@host`. When omitted, the orchestrator runs on the local machine. SSH is the transport; `ProxyJump` configured in `~/.ssh/config` is honoured automatically. |
-| `--instance-key` | path     | *(auto)* | SSH private key used to log into the instance. When unset, codebox tries the user's default keys. |
+| `--instance-key` | path(s)  | *(auto)* | SSH key(s) used to log into the instance; repeat the flag or comma-separate to supply several. All listed keys are installed into the instance at create time. When unset, codebox tries the user's default keys. |
 
 Default flags can be set in a `.codebox.conf` file (YAML) so they apply
 without retyping. Entries under `args.all` become persistent root flags;
@@ -72,7 +72,7 @@ Flags (in help order):
 | ----------------------- | ------ | -------------- | ----------- |
 | `--orchestrator`        | enum   | `podman`       | Container orchestrator (`podman`, `docker`). |
 | `--remote`              | string | *(local)*      | Provision on a remote host (`user@host`). |
-| `--instance-key`        | path   | *(auto)*       | SSH key for logging into the new instance. |
+| `--instance-key`        | path(s) | *(auto)*       | SSH key(s) for logging into the new instance; all listed keys are installed into its authorized_keys. |
 | `--rebuild`             | bool   | `false`        | Force a rebuild of the base image even if a cached one exists. |
 | `--https-proxy`         | string | *(unset)*      | Append `export HTTPS_PROXY="<value>"` to the in-container user's login profile so interactive shells route HTTPS through the configured proxy. Other build-time downloads (apt, dnf, Go, .NET, uv, nvm) still go through the builder host's network — only the operator's shell inside the running container sees the proxy. The exception is the agent install layers (`--claude`, `--codex`, `--opencode`), which export `HTTPS_PROXY` inline so curl (and any sub-downloads the install scripts perform) route through the proxy too. The value is not validated; pass it the way curl would accept it (`http://proxy:3128`, `http://user:pw@proxy:3128`, ...). |
 | `--os`                  | enum   | `debian_13`    | Base OS image (`debian_12`, `debian_13`, `ubuntu_24`, `ubuntu_26`, `redhat_10`). |
@@ -169,7 +169,7 @@ codebox shell demo \
 | ---------------- | --------- | --------- | ----------- |
 | `--orchestrator` | enum      | `podman`  | Container orchestrator (`podman`, `docker`). |
 | `--remote`       | string    | *(local)* | Target a remote host (`user@host`). |
-| `--instance-key` | path      | *(auto)*  | SSH key for logging into the instance. |
+| `--instance-key` | path(s)   | *(auto)*  | SSH key(s) for logging into the instance. |
 | `--port`         | `L:R` (repeatable) | *(none)* | Forward `LOCAL:REMOTE` for the lifetime of the shell. Repeat for multiple forwards. |
 
 ### `codebox port-forward INSTANCE`
@@ -226,7 +226,7 @@ Press Ctrl-C to stop.
 | ---------------- | ------ | --------- | ----------- |
 | `--orchestrator` | enum   | `podman`  | Container orchestrator (`podman`, `docker`). |
 | `--remote`       | string | *(local)* | Target a remote host (`user@host`). |
-| `--instance-key` | path   | *(auto)*  | SSH key for logging into the instance. |
+| `--instance-key` | path(s) | *(auto)*  | SSH key(s) for logging into the instance. |
 
 Positional arguments:
 
@@ -277,7 +277,7 @@ When the instance is reached via a bastion (`--remote`), VS Code's
 Remote-SSH cannot take a `ProxyJump` on the command line, so codebox wires
 one up automatically: it registers a managed host alias `codebox-INSTANCE`
 in `~/.ssh/codebox_config` — carrying `HostName`, `Port`, `User`, the
-`ProxyJump`, and the `IdentityFile` when `--instance-key` is set — and adds
+`ProxyJump`, and one `IdentityFile` per `--instance-key` supplied — and adds
 a one-time `Include codebox_config` line to `~/.ssh/config`. The printed
 URI targets that alias, so the connection traverses the bastion with no
 manual ssh-config edits. The managed file is codebox's own; your
@@ -292,7 +292,7 @@ removed too.
 | ---------------- | ------ | --------- | ----------- |
 | `--orchestrator` | enum   | `podman`  | Container orchestrator (`podman`, `docker`). |
 | `--remote`       | string | *(local)* | Target a remote host (`user@host`). |
-| `--instance-key` | path   | *(auto)*  | SSH key for logging into the instance. |
+| `--instance-key` | path(s) | *(auto)*  | SSH key(s) for logging into the instance. |
 
 Positional arguments:
 
@@ -317,7 +317,7 @@ codebox exec demo \
 | ---------------- | ------ | --------- | ----------- |
 | `--orchestrator` | enum   | `podman`  | Container orchestrator (`podman`, `docker`). |
 | `--remote`       | string | *(local)* | Target a remote host (`user@host`). |
-| `--instance-key` | path   | *(auto)*  | SSH key for logging into the instance. |
+| `--instance-key` | path(s) | *(auto)*  | SSH key(s) for logging into the instance. |
 
 Positional arguments:
 
@@ -344,7 +344,7 @@ codebox file pull demo \
 | ----------------- | ------ | --------- | ----------- |
 | `--orchestrator`  | enum   | `podman`  | Container orchestrator (`podman`, `docker`). |
 | `--remote`        | string | *(local)* | Target a remote host (`user@host`). |
-| `--instance-key`  | path   | *(auto)*  | SSH key for logging into the instance. |
+| `--instance-key`  | path(s) | *(auto)*  | SSH key(s) for logging into the instance. |
 | `--instance-path` | path   | *(unset)* | File or directory on the instance to copy from. |
 | `--local-path`    | path   | *(unset)* | Local directory to copy into. |
 
@@ -362,7 +362,7 @@ codebox file push demo \
 | ----------------- | ------ | --------- | ----------- |
 | `--orchestrator`  | enum   | `podman`  | Container orchestrator (`podman`, `docker`). |
 | `--remote`        | string | *(local)* | Target a remote host (`user@host`). |
-| `--instance-key`  | path   | *(auto)*  | SSH key for logging into the instance. |
+| `--instance-key`  | path(s) | *(auto)*  | SSH key(s) for logging into the instance. |
 | `--local-path`    | path   | *(unset)* | File or directory on the local machine to copy from. |
 | `--instance-path` | path   | *(unset)* | Directory on the instance to copy into. |
 
@@ -385,7 +385,7 @@ codebox git push demo main:issue-1234 \
 | ---------------- | ------ | --------- | ----------- |
 | `--orchestrator` | enum   | `podman`  | Container orchestrator (`podman`, `docker`). |
 | `--remote`       | string | *(local)* | Target a remote host (`user@host`). |
-| `--instance-key` | path   | *(auto)*  | SSH key for logging into the instance. |
+| `--instance-key` | path(s) | *(auto)*  | SSH key(s) for logging into the instance. |
 
 Positional arguments:
 
@@ -429,7 +429,7 @@ codebox git pull issue-1234 \              # branch defaults to the instance nam
 | ---------------- | ------ | --------- | ----------- |
 | `--orchestrator` | enum   | `podman`  | Container orchestrator (`podman`, `docker`). |
 | `--remote`       | string | *(local)* | Target a remote host (`user@host`). |
-| `--instance-key` | path   | *(auto)*  | SSH key for logging into the instance. |
+| `--instance-key` | path(s) | *(auto)*  | SSH key(s) for logging into the instance. |
 
 Positional arguments:
 
@@ -453,7 +453,7 @@ codebox mount demo ./mnt \
 | ---------------- | ------ | --------- | ----------- |
 | `--orchestrator` | enum   | `podman`  | Container orchestrator (`podman`, `docker`). |
 | `--remote`       | string | *(local)* | Target a remote host (`user@host`). |
-| `--instance-key` | path   | *(auto)*  | SSH key for logging into the instance. |
+| `--instance-key` | path(s) | *(auto)*  | SSH key(s) for logging into the instance. |
 
 Positional arguments:
 
@@ -522,7 +522,7 @@ codebox umount demo ./mnt \
 | ---------------- | ------ | --------- | ----------- |
 | `--orchestrator` | enum   | `podman`  | Container orchestrator (`podman`, `docker`). |
 | `--remote`       | string | *(local)* | Target a remote host (`user@host`). |
-| `--instance-key` | path   | *(auto)*  | SSH key (parsed for symmetry with `mount`; not used by `fusermount`). |
+| `--instance-key` | path(s) | *(auto)*  | SSH key(s) (parsed for symmetry with `mount`; not used by `fusermount`). |
 
 Positional arguments:
 
@@ -597,7 +597,7 @@ Flags (in help order):
 | ----------------------- | ------ | ----------- | ----------- |
 | `--orchestrator`        | enum   | `podman`    | Container orchestrator (`podman`, `docker`). |
 | `--remote`              | string | *(local)*   | Provision on a remote host (`user@host`). |
-| `--instance-key`        | path   | *(auto)*    | SSH key for logging into the new instance. |
+| `--instance-key`        | path(s) | *(auto)*    | SSH key(s) for logging into the new instance; all listed keys are installed into its authorized_keys. |
 | `--rebuild`             | bool   | `false`     | Force a rebuild of the base image even if a cached one exists. |
 | `--https-proxy`         | string | *(unset)*   | Append `export HTTPS_PROXY="<value>"` to the in-container user's login profile (see [`create`](#codebox-create-instance)). |
 | `--os`                  | enum   | `debian_13` | Base OS image (`debian_12`, `debian_13`, `ubuntu_24`, `ubuntu_26`, `redhat_10`). |

@@ -20,8 +20,10 @@ type Options struct {
 	// OS is one of the keys returned by SupportedOS.
 	OS string
 	// AuthorizedKey is the SSH public-key content to install into
-	// /home/user/.ssh/authorized_keys inside the image. A trailing
-	// newline is normalised away before embedding.
+	// /home/user/.ssh/authorized_keys inside the image. It may hold
+	// several keys, one per line, so the instance is reachable from
+	// several machines. A trailing newline is normalised away before
+	// embedding.
 	AuthorizedKey string
 
 	// HTTPSProxy, when non-empty, becomes an `ENV HTTPS_PROXY=<value>`

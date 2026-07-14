@@ -22,7 +22,7 @@ func TestPortForward_HappyPath_Local(t *testing.T) {
 	err := a.PortForward(context.Background(), &stdout, &stderr, app.PortForwardRequest{
 		Instance:     "demo",
 		Orchestrator: "podman",
-		InstanceKey:  "k",
+		InstanceKeys: []string{"k"},
 		Ports:        []string{"13000:3000", "13001:3001"},
 	})
 	if err != nil {

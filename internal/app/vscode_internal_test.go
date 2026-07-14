@@ -14,11 +14,11 @@ func TestEnsureVSCodeSSHHost_Idempotent(t *testing.T) {
 	home := t.TempDir()
 	a := &App{home: home}
 
-	if _, err := a.ensureVSCodeSSHHost("demo", "33000", "/keys/k", "ops@bastion"); err != nil {
+	if _, err := a.ensureVSCodeSSHHost("demo", "33000", []string{"/keys/k"}, "ops@bastion"); err != nil {
 		t.Fatalf("first ensure: %v", err)
 	}
 	// Second run with a different port — the block must be replaced.
-	if _, err := a.ensureVSCodeSSHHost("demo", "44000", "/keys/k", "ops@bastion"); err != nil {
+	if _, err := a.ensureVSCodeSSHHost("demo", "44000", []string{"/keys/k"}, "ops@bastion"); err != nil {
 		t.Fatalf("second ensure: %v", err)
 	}
 
@@ -51,7 +51,7 @@ func TestEnsureVSCodeSSHHost_PreservesExistingConfig(t *testing.T) {
 	}
 
 	a := &App{home: home}
-	if _, err := a.ensureVSCodeSSHHost("demo", "33000", "", "ops@bastion"); err != nil {
+	if _, err := a.ensureVSCodeSSHHost("demo", "33000", nil, "ops@bastion"); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
 
@@ -86,7 +86,7 @@ func TestRemoveVSCodeSSHHost_EmptiesFileAndDropsInclude(t *testing.T) {
 	}
 
 	a := &App{home: home}
-	if _, err := a.ensureVSCodeSSHHost("demo", "33000", "/keys/k", "ops@bastion"); err != nil {
+	if _, err := a.ensureVSCodeSSHHost("demo", "33000", []string{"/keys/k"}, "ops@bastion"); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
 
@@ -115,10 +115,10 @@ func TestRemoveVSCodeSSHHost_EmptiesFileAndDropsInclude(t *testing.T) {
 func TestRemoveVSCodeSSHHost_KeepsOtherInstances(t *testing.T) {
 	home := t.TempDir()
 	a := &App{home: home}
-	if _, err := a.ensureVSCodeSSHHost("demo", "33000", "/keys/k", "ops@bastion"); err != nil {
+	if _, err := a.ensureVSCodeSSHHost("demo", "33000", []string{"/keys/k"}, "ops@bastion"); err != nil {
 		t.Fatalf("ensure demo: %v", err)
 	}
-	if _, err := a.ensureVSCodeSSHHost("other", "44000", "/keys/k", "ops@bastion"); err != nil {
+	if _, err := a.ensureVSCodeSSHHost("other", "44000", []string{"/keys/k"}, "ops@bastion"); err != nil {
 		t.Fatalf("ensure other: %v", err)
 	}
 

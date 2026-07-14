@@ -159,7 +159,7 @@ func runWorkflow(
 	return app.New(home).Workflow(ctx, stdin, stdout, stderr, app.WorkflowRequest{
 		Orchestrator:        opts.orchestrator,
 		Remote:              opts.remote,
-		InstanceKey:         opts.instanceKey,
+		InstanceKeys:        opts.instanceKeys,
 		Refspec:             opts.refspec,
 		PushSource:          pushSource,
 		OS:                  opts.osImage,

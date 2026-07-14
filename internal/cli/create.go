@@ -191,7 +191,7 @@ func runCreate(ctx context.Context, out io.Writer, opts createOpts) error {
 		Instance:            opts.instance,
 		Orchestrator:        opts.orchestrator,
 		OS:                  opts.osImage,
-		InstanceKey:         opts.instanceKey,
+		InstanceKeys:        opts.instanceKeys,
 		Remote:              opts.remote,
 		Rebuild:             opts.rebuild,
 		HTTPSProxy:          opts.httpsProxy,

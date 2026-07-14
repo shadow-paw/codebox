@@ -56,7 +56,7 @@ func runPush(
 		Instance:     instance,
 		Orchestrator: opts.orchestrator,
 		Remote:       opts.remote,
-		InstanceKey:  opts.instanceKey,
+		InstanceKeys: opts.instanceKeys,
 		LocalPath:    opts.localPath,
 		InstancePath: opts.instancePath,
 	})

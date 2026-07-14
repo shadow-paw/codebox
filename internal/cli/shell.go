@@ -60,7 +60,7 @@ func runShell(
 		Instance:     opts.instance,
 		Orchestrator: opts.orchestrator,
 		Remote:       opts.remote,
-		InstanceKey:  opts.instanceKey,
+		InstanceKeys: opts.instanceKeys,
 		Ports:        opts.ports,
 	})
 }

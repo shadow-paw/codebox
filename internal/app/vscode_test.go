@@ -29,7 +29,7 @@ func TestVSCode_Remote_OpensFolderURI(t *testing.T) {
 	err := a.VSCode(context.Background(), &stdout, &stderr, app.VSCodeRequest{
 		Instance:     "demo",
 		Orchestrator: "podman",
-		InstanceKey:  "k",
+		InstanceKeys: []string{"k"},
 	})
 	if err != nil {
 		t.Fatalf("VSCode: %v", err)
@@ -103,7 +103,7 @@ func TestVSCode_Remote_BastionWritesProxyJumpAlias(t *testing.T) {
 	err := a.VSCode(context.Background(), &stdout, &bytes.Buffer{}, app.VSCodeRequest{
 		Instance:     "demo",
 		Orchestrator: "podman",
-		InstanceKey:  "/keys/id_demo",
+		InstanceKeys: []string{"/keys/id_demo"},
 		Remote:       "ops@bastion",
 	})
 	if err != nil {
