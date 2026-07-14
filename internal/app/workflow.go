@@ -19,7 +19,7 @@ import (
 type WorkflowRequest struct {
 	Orchestrator string
 	Remote       string
-	InstanceKey  string
+	InstanceKeys []string
 	Refspec      string
 
 	// PushSource is the project-configured default source (git.push-from
@@ -81,7 +81,7 @@ func (a *App) Workflow(
 		Instance:            targetBranch,
 		Orchestrator:        req.Orchestrator,
 		OS:                  req.OS,
-		InstanceKey:         req.InstanceKey,
+		InstanceKeys:        req.InstanceKeys,
 		Remote:              req.Remote,
 		Rebuild:             req.Rebuild,
 		HTTPSProxy:          req.HTTPSProxy,
@@ -107,7 +107,7 @@ func (a *App) Workflow(
 		Instance:     targetBranch,
 		Orchestrator: req.Orchestrator,
 		Remote:       req.Remote,
-		InstanceKey:  req.InstanceKey,
+		InstanceKeys: req.InstanceKeys,
 		// refspec is already fully resolved (source filled in), so no
 		// PushSource is needed here — GitPush leaves it untouched.
 		Refspec: refspec,
@@ -119,6 +119,6 @@ func (a *App) Workflow(
 		Instance:     targetBranch,
 		Orchestrator: req.Orchestrator,
 		Remote:       req.Remote,
-		InstanceKey:  req.InstanceKey,
+		InstanceKeys: req.InstanceKeys,
 	})
 }

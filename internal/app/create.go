@@ -43,15 +43,18 @@ var startCheckBackoff = []time.Duration{
 }
 
 // CreateRequest is the use-case input for App.Create. Fields mirror the
-// `codebox create` flags. InstanceKey is the raw value the operator
-// supplied (possibly with a leading "~/"); App.Create handles ~
-// expansion before passing it to the key resolver, and echoes the raw
-// value back in the success hint.
+// `codebox create` flags. InstanceKeys holds the raw values the
+// operator supplied (possibly with a leading "~/"); App.Create handles
+// ~ expansion before passing them to the key resolver, and echoes the
+// raw values back in the success hint. Every listed key's public side
+// is installed into the instance's authorized_keys, so the sandbox can
+// be reached from several machines. An empty list falls back to
+// auto-detecting the single key in ~/.ssh.
 type CreateRequest struct {
 	Instance     string
 	Orchestrator string
 	OS           string
-	InstanceKey  string
+	InstanceKeys []string
 	Remote       string
 	Rebuild      bool
 
@@ -134,7 +137,7 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 		}
 	}
 
-	authKey, err := a.keys.Resolve(expandHome(req.InstanceKey, a.home))
+	authKey, err := a.resolveAuthorizedKeys(req.InstanceKeys)
 	if err != nil {
 		return err
 	}
@@ -427,7 +430,7 @@ func (a *App) pushFile(
 
 	fullDst := fmt.Sprintf("%s@localhost:%s", instanceUser, dst)
 	rsyncCmd := buildCredentialsRsyncCommand(req.Remote, hostPort,
-		expandHome(req.InstanceKey, a.home), src, fullDst)
+		expandHomeAll(req.InstanceKeys, a.home), src, fullDst)
 	_, _ = fmt.Fprintf(w, "%s...\n", label)
 	writeRsyncBlock(w, rsyncCmd)
 
@@ -579,8 +582,8 @@ func shellHint(req CreateRequest) string {
 	if req.Remote != "" {
 		parts = append(parts, "--remote="+req.Remote)
 	}
-	if req.InstanceKey != "" {
-		parts = append(parts, "--instance-key="+req.InstanceKey)
+	if len(req.InstanceKeys) > 0 {
+		parts = append(parts, "--instance-key="+strings.Join(req.InstanceKeys, ","))
 	}
 	return strings.Join(parts, " ")
 }
@@ -637,6 +640,32 @@ func validateInstanceName(name string) error {
 	return nil
 }
 
+// resolveAuthorizedKeys resolves every supplied instance key to its
+// public-key content and joins them one per line, ready to be embedded
+// as the instance's authorized_keys. An empty list falls back to the
+// resolver's auto-detection (the single *.pub in ~/.ssh). Duplicate
+// key content is dropped so listing the same key twice — or a private
+// and public path of the same pair — installs it once.
+func (a *App) resolveAuthorizedKeys(instanceKeys []string) (string, error) {
+	if len(instanceKeys) == 0 {
+		return a.keys.Resolve("")
+	}
+	seen := make(map[string]bool)
+	var keys []string
+	for _, k := range instanceKeys {
+		pub, err := a.keys.Resolve(expandHome(k, a.home))
+		if err != nil {
+			return "", err
+		}
+		if seen[pub] {
+			continue
+		}
+		seen[pub] = true
+		keys = append(keys, pub)
+	}
+	return strings.Join(keys, "\n"), nil
+}
+
 // expandHome replaces a leading "~/" (or bare "~") with home so paths
 // can be supplied the way the operator would type them in a shell.
 func expandHome(p, home string) string {
@@ -650,4 +679,16 @@ func expandHome(p, home string) string {
 		return filepath.Join(home, p[2:])
 	}
 	return p
+}
+
+// expandHomeAll applies expandHome to every entry, preserving order.
+func expandHomeAll(paths []string, home string) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+	out := make([]string, len(paths))
+	for i, p := range paths {
+		out[i] = expandHome(p, home)
+	}
+	return out
 }

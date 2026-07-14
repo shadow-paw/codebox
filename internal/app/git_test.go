@@ -127,7 +127,7 @@ func TestGitPush_Remote(t *testing.T) {
 			Instance:     "demo",
 			Orchestrator: "podman",
 			Remote:       "ops@bastion",
-			InstanceKey:  "/keys/id_rsa",
+			InstanceKeys: []string{"/keys/id_rsa"},
 			Refspec:      "origin/main:issue-1234",
 		})
 	if err != nil {
@@ -575,7 +575,7 @@ func TestGitPull_Remote(t *testing.T) {
 			Instance:     "demo",
 			Orchestrator: "podman",
 			Remote:       "ops@bastion",
-			InstanceKey:  "/keys/id_rsa",
+			InstanceKeys: []string{"/keys/id_rsa"},
 			Branch:       "work",
 		})
 	if err != nil {

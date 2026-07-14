@@ -19,7 +19,7 @@ type ExecRequest struct {
 	Instance     string
 	Orchestrator string
 	Remote       string
-	InstanceKey  string
+	InstanceKeys []string
 	Command      string
 	Args         []string
 }
@@ -30,10 +30,10 @@ type ExecRequest struct {
 //
 // When Remote is set the orchestrator lookups (existence + host port)
 // run via ssh to that host using the operator's normal ssh
-// configuration — InstanceKey is **not** passed to that outer ssh. The
-// container-bound ssh always runs locally and adds `-J Remote` so
-// `localhost` resolves on the orchestrator host. InstanceKey, when
-// supplied, is passed as `-i` to that inner ssh only.
+// configuration — InstanceKeys are **not** passed to that outer ssh.
+// The container-bound ssh always runs locally and adds `-J Remote` so
+// `localhost` resolves on the orchestrator host. Each InstanceKeys
+// entry, when supplied, is passed as `-i` to that inner ssh only.
 func (a *App) Exec(
 	ctx context.Context,
 	stdin io.Reader,
@@ -67,7 +67,7 @@ func (a *App) Exec(
 	}
 
 	sshCmd := buildExecSSHCommand(req.Remote, hostPort,
-		expandHome(req.InstanceKey, a.home), req.Command, req.Args)
+		expandHomeAll(req.InstanceKeys, a.home), req.Command, req.Args)
 
 	return a.runners("").Run(ctx, sshCmd, stdin, stdout, stderr)
 }
@@ -79,11 +79,9 @@ func (a *App) Exec(
 // sending them to that shell, so this inner layer is what keeps spaces
 // in arguments intact. The whole remote command is then single-quoted
 // again for the outer `sh -c` that the local runner executes.
-func buildExecSSHCommand(remote, hostPort, instanceKey, command string, args []string) string {
+func buildExecSSHCommand(remote, hostPort string, instanceKeys []string, command string, args []string) string {
 	parts := []string{"ssh", "-o", "StrictHostKeyChecking=no"}
-	if instanceKey != "" {
-		parts = append(parts, "-i", shquote(instanceKey))
-	}
+	parts = appendIdentityArgs(parts, instanceKeys)
 	if remote != "" {
 		parts = append(parts, "-J", shquote(remote))
 	}

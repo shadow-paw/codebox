@@ -22,7 +22,7 @@ type MountRequest struct {
 	Instance     string
 	Orchestrator string
 	Remote       string
-	InstanceKey  string
+	InstanceKeys []string
 	LocalDir     string
 }
 
@@ -32,7 +32,7 @@ type UnmountRequest struct {
 	Instance     string
 	Orchestrator string
 	Remote       string
-	InstanceKey  string
+	InstanceKeys []string
 	LocalDir     string
 }
 
@@ -97,15 +97,15 @@ func (a *App) Mount(ctx context.Context, stdout, stderr io.Writer, req MountRequ
 		return fmt.Errorf("create local directory %q: %w", localDir, err)
 	}
 
-	keyPath := expandHome(req.InstanceKey, a.home)
-	initCmd := buildInstanceSSHCommand(req.Remote, hostPort, keyPath,
+	keyPaths := expandHomeAll(req.InstanceKeys, a.home)
+	initCmd := buildInstanceSSHCommand(req.Remote, hostPort, keyPaths,
 		fmt.Sprintf("mkdir -p ~/%s", instanceSourceDir))
 	var initErr bytes.Buffer
 	if err := local.Run(ctx, initCmd, nil, io.Discard, &initErr); err != nil {
 		return wrapRunErr("create instance source directory", err, &initErr)
 	}
 
-	sshfsCmd := buildSshfsCommand(req.Instance, req.Remote, hostPort, keyPath, localDir)
+	sshfsCmd := buildSshfsCommand(req.Instance, req.Remote, hostPort, keyPaths, localDir)
 	writeSshfsBlock(stdout, sshfsCmd)
 	var sshfsErr bytes.Buffer
 	if err := local.Run(ctx, sshfsCmd, nil, stdout, &sshfsErr); err != nil {
@@ -274,11 +274,11 @@ func unescapeProcMounts(s string) string {
 // instance's ~/source directory onto localDir. The options mirror the
 // transport used by push/pull/exec: StrictHostKeyChecking is disabled
 // (codebox controls the keypair via authorized_keys), an explicit
-// IdentityFile is set when --instance-key is supplied, and ProxyJump
+// IdentityFile is set per --instance-key supplied, and ProxyJump
 // is added when the orchestrator host is reached via a bastion. The
 // `fsname=` tag is what `codebox delete` later greps for in
 // /proc/mounts to clean up dangling mounts.
-func buildSshfsCommand(instance, remote, hostPort, instanceKey, localDir string) string {
+func buildSshfsCommand(instance, remote, hostPort string, instanceKeys []string, localDir string) string {
 	parts := []string{
 		"sshfs",
 		shquote(fmt.Sprintf("%s@localhost:%s", instanceUser, instanceSourceAbs())),
@@ -288,8 +288,10 @@ func buildSshfsCommand(instance, remote, hostPort, instanceKey, localDir string)
 		"-o", "fsname=" + shquote(fsnameFor(instance)),
 		"-o", "reconnect",
 	}
-	if instanceKey != "" {
-		parts = append(parts, "-o", "IdentityFile="+shquote(instanceKey))
+	for _, k := range instanceKeys {
+		if k != "" {
+			parts = append(parts, "-o", "IdentityFile="+shquote(k))
+		}
 	}
 	if remote != "" {
 		parts = append(parts, "-o", "ProxyJump="+shquote(remote))

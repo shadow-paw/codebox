@@ -59,7 +59,7 @@ func runVSCode(
 		Instance:           instance,
 		Orchestrator:       opts.orchestrator,
 		Remote:             opts.remote,
-		InstanceKey:        opts.instanceKey,
+		InstanceKeys:       opts.instanceKeys,
 		InsideVSCodeRemote: insideVSCode && insideSSH,
 		InsideSSHRemote:    insideSSH,
 	})

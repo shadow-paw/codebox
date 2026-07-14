@@ -19,7 +19,7 @@ type PortForwardRequest struct {
 	Instance     string
 	Orchestrator string
 	Remote       string
-	InstanceKey  string
+	InstanceKeys []string
 	Ports        []string
 }
 
@@ -62,7 +62,7 @@ func (a *App) PortForward(ctx context.Context, stdout, stderr io.Writer, req Por
 	}
 
 	sshCmd := buildPortForwardSSHCommand(req.Remote, hostPort,
-		expandHome(req.InstanceKey, a.home), req.Ports)
+		expandHomeAll(req.InstanceKeys, a.home), req.Ports)
 
 	writePortForwardBanner(stdout, req.Instance, req.Ports)
 
@@ -93,15 +93,13 @@ func (a *App) PortForward(ctx context.Context, stdout, stderr io.Writer, req Por
 //
 // ports are pre-normalized "LOCAL:REMOTE" pairs (see PortForwardRequest);
 // any malformed entry is skipped defensively.
-func buildPortForwardSSHCommand(remote, hostPort, instanceKey string, ports []string) string {
+func buildPortForwardSSHCommand(remote, hostPort string, instanceKeys []string, ports []string) string {
 	parts := []string{"ssh", "-N",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "ExitOnForwardFailure=yes",
 		"-o", "ServerAliveInterval=30",
 	}
-	if instanceKey != "" {
-		parts = append(parts, "-i", shquote(instanceKey))
-	}
+	parts = appendIdentityArgs(parts, instanceKeys)
 	for _, p := range ports {
 		l, r, ok := strings.Cut(p, ":")
 		if !ok || l == "" || r == "" {

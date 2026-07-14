@@ -18,7 +18,7 @@ type PushRequest struct {
 	Instance     string
 	Orchestrator string
 	Remote       string
-	InstanceKey  string
+	InstanceKeys []string
 	LocalPath    string
 	InstancePath string
 }
@@ -31,7 +31,7 @@ type PullRequest struct {
 	Instance     string
 	Orchestrator string
 	Remote       string
-	InstanceKey  string
+	InstanceKeys []string
 	InstancePath string
 	LocalPath    string
 }
@@ -50,7 +50,7 @@ func (a *App) Push(ctx context.Context, stdout, stderr io.Writer, req PushReques
 		instance:     req.Instance,
 		orchestrator: req.Orchestrator,
 		remote:       req.Remote,
-		instanceKey:  req.InstanceKey,
+		instanceKeys: req.InstanceKeys,
 		src:          local,
 		dst:          dst,
 	})
@@ -70,7 +70,7 @@ func (a *App) Pull(ctx context.Context, stdout, stderr io.Writer, req PullReques
 		instance:     req.Instance,
 		orchestrator: req.Orchestrator,
 		remote:       req.Remote,
-		instanceKey:  req.InstanceKey,
+		instanceKeys: req.InstanceKeys,
 		src:          src,
 		dst:          local,
 	})
@@ -107,7 +107,7 @@ type transferRequest struct {
 	instance     string
 	orchestrator string
 	remote       string
-	instanceKey  string
+	instanceKeys []string
 	src          string
 	dst          string
 }
@@ -145,7 +145,7 @@ func (a *App) transfer(
 	}
 
 	rsyncCmd := buildRsyncCommand(req.remote, hostPort,
-		expandHome(req.instanceKey, a.home), req.src, req.dst)
+		expandHomeAll(req.instanceKeys, a.home), req.src, req.dst)
 	writeRsyncBlock(stdout, rsyncCmd)
 
 	return a.runners("").Run(ctx, rsyncCmd, nil, stdout, stderr)
@@ -156,14 +156,12 @@ func (a *App) transfer(
 // argument to `-e`; tokens within it (the key path, the jump host)
 // are themselves single-quoted so they survive both the outer `sh -c`
 // unquoting and the inner tokenisation rsync performs on the `-e`
-// value. instanceKey, when supplied, is only passed to this inner ssh
-// — the orchestrator-side runner that looked up the host port already
-// used the operator's normal ssh configuration.
-func buildRsyncCommand(remote, hostPort, instanceKey, src, dst string) string {
+// value. instanceKeys, when supplied, are only passed to this inner
+// ssh — the orchestrator-side runner that looked up the host port
+// already used the operator's normal ssh configuration.
+func buildRsyncCommand(remote, hostPort string, instanceKeys []string, src, dst string) string {
 	sshParts := []string{"ssh", "-o", "StrictHostKeyChecking=no"}
-	if instanceKey != "" {
-		sshParts = append(sshParts, "-i", shquote(instanceKey))
-	}
+	sshParts = appendIdentityArgs(sshParts, instanceKeys)
 	if remote != "" {
 		sshParts = append(sshParts, "-J", shquote(remote))
 	}
@@ -195,11 +193,9 @@ func buildRsyncCommand(remote, hostPort, instanceKey, src, dst string) string {
 //     images ship).
 //   - --chmod=F0600 so the credentials file lands with the same mode
 //     Claude expects on the host, regardless of the source's perms.
-func buildCredentialsRsyncCommand(remote, hostPort, instanceKey, src, dst string) string {
+func buildCredentialsRsyncCommand(remote, hostPort string, instanceKeys []string, src, dst string) string {
 	sshParts := []string{"ssh", "-o", "StrictHostKeyChecking=no"}
-	if instanceKey != "" {
-		sshParts = append(sshParts, "-i", shquote(instanceKey))
-	}
+	sshParts = appendIdentityArgs(sshParts, instanceKeys)
 	if remote != "" {
 		sshParts = append(sshParts, "-J", shquote(remote))
 	}

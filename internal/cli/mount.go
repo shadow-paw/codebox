@@ -74,7 +74,7 @@ func runMount(
 		Instance:     instance,
 		Orchestrator: opts.orchestrator,
 		Remote:       opts.remote,
-		InstanceKey:  opts.instanceKey,
+		InstanceKeys: opts.instanceKeys,
 		LocalDir:     localDir,
 	})
 }
@@ -93,7 +93,7 @@ func runUmount(
 		Instance:     instance,
 		Orchestrator: opts.orchestrator,
 		Remote:       opts.remote,
-		InstanceKey:  opts.instanceKey,
+		InstanceKeys: opts.instanceKeys,
 		LocalDir:     localDir,
 	})
 }

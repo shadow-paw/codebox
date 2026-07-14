@@ -16,15 +16,20 @@ import (
 	"codebox/internal/app"
 )
 
-// stubKeys returns a fixed public key.
+// stubKeys returns a fixed public key, or a per-path key when byPath
+// holds an entry for the requested path.
 type stubKeys struct {
-	key string
-	err error
-	got string
+	key    string
+	byPath map[string]string
+	err    error
+	got    string
 }
 
 func (s *stubKeys) Resolve(keyPath string) (string, error) {
 	s.got = keyPath
+	if k, ok := s.byPath[keyPath]; ok {
+		return k, s.err
+	}
 	return s.key, s.err
 }
 
@@ -111,7 +116,7 @@ func TestCreate_HappyPath_Local(t *testing.T) {
 		Instance:     "demo",
 		Orchestrator: "podman",
 		OS:           "debian_13",
-		InstanceKey:  "~/.ssh/id_ed25519",
+		InstanceKeys: []string{"~/.ssh/id_ed25519"},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v\nout:\n%s", err, out.String())
@@ -172,6 +177,52 @@ func TestCreate_HappyPath_Local(t *testing.T) {
 	// ~ expansion should have happened before the resolver was called.
 	if keys.got != "/home/op/.ssh/id_ed25519" {
 		t.Errorf("resolver received %q, want expanded %q", keys.got, "/home/op/.ssh/id_ed25519")
+	}
+}
+
+// TestCreate_MultipleInstanceKeys pins the multi-machine contract:
+// every --instance-key is resolved and lands in the image's
+// authorized_keys (one per line), duplicates are installed once, and
+// the success hint echoes the full comma-joined list so the operator
+// can copy-paste it back.
+func TestCreate_MultipleInstanceKeys(t *testing.T) {
+	t.Parallel()
+	keys := &stubKeys{byPath: map[string]string{
+		"/home/op/.ssh/id_ed25519": "ssh-ed25519 AAAA laptop",
+		"/keys/desktop":            "ssh-rsa BBBB desktop",
+		"/keys/desktop-copy":       "ssh-rsa BBBB desktop", // same key, other path
+	}}
+	a, fr := newApp(t, keys,
+		reply{stdout: "other\n"},  // ps -a — no collision
+		reply{},                   // build
+		reply{stdout: "abc123\n"}, // run
+		reply{stdout: "demo\n"},   // ps — running check
+	)
+
+	var out bytes.Buffer
+	err := a.Create(context.Background(), &out, app.CreateRequest{
+		Instance:     "demo",
+		Orchestrator: "podman",
+		OS:           "debian_13",
+		InstanceKeys: []string{"~/.ssh/id_ed25519", "/keys/desktop", "/keys/desktop-copy"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v\nout:\n%s", err, out.String())
+	}
+
+	// Both distinct keys are embedded in the authorized_keys layer of
+	// the Dockerfile piped to the build; the duplicate appears once.
+	dockerfile := fr.calls[1].stdin
+	if !strings.Contains(dockerfile, `ssh-ed25519 AAAA laptop\nssh-rsa BBBB desktop`) {
+		t.Errorf("Dockerfile should embed both keys newline-joined:\n%s", dockerfile)
+	}
+	if strings.Count(dockerfile, "ssh-rsa BBBB desktop") != 1 {
+		t.Errorf("duplicate key content should be installed once:\n%s", dockerfile)
+	}
+
+	if !strings.Contains(out.String(),
+		"  codebox shell demo --instance-key=~/.ssh/id_ed25519,/keys/desktop,/keys/desktop-copy") {
+		t.Errorf("success hint should comma-join the keys:\n%s", out.String())
 	}
 }
 

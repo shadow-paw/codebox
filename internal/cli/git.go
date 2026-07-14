@@ -121,7 +121,7 @@ func runGitPush(
 		Instance:     instance,
 		Orchestrator: opts.orchestrator,
 		Remote:       opts.remote,
-		InstanceKey:  opts.instanceKey,
+		InstanceKeys: opts.instanceKeys,
 		Refspec:      refspec,
 		PushSource:   pushSource,
 	})
@@ -144,7 +144,7 @@ func runGitPull(
 		Instance:     instance,
 		Orchestrator: opts.orchestrator,
 		Remote:       opts.remote,
-		InstanceKey:  opts.instanceKey,
+		InstanceKeys: opts.instanceKeys,
 		Branch:       branch,
 	})
 }
