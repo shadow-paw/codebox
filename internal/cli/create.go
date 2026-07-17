@@ -68,7 +68,8 @@ Tools:
   --tmux     tmux terminal multiplexer (codebox shell launches it on connect)
 
 Network:
-  --https-proxy=URL   Export HTTPS_PROXY=URL from the in-container user login profile
+  --https-proxy=URL   Export HTTPS_PROXY (and a matching HTTP_PROXY, plus
+                      NO_PROXY=localhost,127.0.0.1) from the in-container user login profile
                       (also exported during agent installs so their curl pipelines route through it)
 `
 
@@ -100,7 +101,8 @@ func newCreateCmd() *cobra.Command {
 	f.BoolVar(&opts.rebuild, "rebuild", false,
 		"Force a rebuild of the base image even if a cached one exists")
 	f.StringVar(&opts.httpsProxy, "https-proxy", "",
-		"Export HTTPS_PROXY=URL from the in-container user login profile (also used for agent installs)")
+		"Export HTTPS_PROXY=URL (with matching HTTP_PROXY and NO_PROXY=localhost,127.0.0.1) "+
+			"from the in-container user login profile (also used for agent installs)")
 	f.StringVar(&opts.osImage, "os", "debian_13",
 		"Base OS image (debian_12, debian_13, ubuntu_24, ubuntu_26, redhat_10)")
 	f.StringVar(&opts.python, "python", "",

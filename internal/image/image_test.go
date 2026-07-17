@@ -279,9 +279,17 @@ func TestGenerate_TmuxInstallsPackage(t *testing.T) {
 func TestGenerate_HTTPSProxyExportsInProfile(t *testing.T) {
 	t.Parallel()
 	out := generateOpts(t, image.Options{OS: "debian_13", HTTPSProxy: "http://proxy.corp:3128"})
-	want := `echo 'export HTTPS_PROXY="http://proxy.corp:3128"' >> /home/user/.profile`
-	if !strings.Contains(out, want) {
-		t.Fatalf("Dockerfile missing %q\n%s", want, out)
+	// HTTP_PROXY mirrors HTTPS_PROXY and NO_PROXY exempts the loopback
+	// addresses; all three land in the same login profile.
+	wants := []string{
+		`echo 'export HTTPS_PROXY="http://proxy.corp:3128"' >> /home/user/.profile`,
+		`echo 'export HTTP_PROXY="http://proxy.corp:3128"' >> /home/user/.profile`,
+		`echo 'export NO_PROXY="localhost,127.0.0.1"' >> /home/user/.profile`,
+	}
+	for _, want := range wants {
+		if !strings.Contains(out, want) {
+			t.Fatalf("Dockerfile missing %q\n%s", want, out)
+		}
 	}
 	// The proxy must NOT become an ENV directive — build-time
 	// downloads should continue to use the builder host's network.
@@ -469,7 +477,8 @@ func TestGenerate_ClaudeInstallUsesHTTPSProxy(t *testing.T) {
 		Claude:     true,
 		HTTPSProxy: "http://proxy.corp:3128",
 	})
-	want := "RUN export HTTPS_PROXY='http://proxy.corp:3128' && " +
+	want := "RUN export HTTPS_PROXY='http://proxy.corp:3128' " +
+		"HTTP_PROXY='http://proxy.corp:3128' NO_PROXY='localhost,127.0.0.1' && " +
 		"curl -fsSL https://claude.ai/install.sh | bash"
 	if !strings.Contains(out, want) {
 		t.Fatalf("Claude install should export HTTPS_PROXY inline:\nwant: %q\nout:\n%s", want, out)
@@ -507,7 +516,8 @@ func TestGenerate_ClaudeInstallProxyEscapesSingleQuotes(t *testing.T) {
 		Claude:     true,
 		HTTPSProxy: `http://us'er:pw@proxy:3128`,
 	})
-	want := `RUN export HTTPS_PROXY='http://us'\''er:pw@proxy:3128' && ` +
+	want := `RUN export HTTPS_PROXY='http://us'\''er:pw@proxy:3128' ` +
+		`HTTP_PROXY='http://us'\''er:pw@proxy:3128' NO_PROXY='localhost,127.0.0.1' && ` +
 		`curl -fsSL https://claude.ai/install.sh | bash`
 	if !strings.Contains(out, want) {
 		t.Fatalf("expected shell-escaped apostrophe in inline proxy export\nwant: %q\nout:\n%s",
@@ -583,7 +593,8 @@ func TestGenerate_OpencodeInstallUsesHTTPSProxy(t *testing.T) {
 		Opencode:   true,
 		HTTPSProxy: "http://proxy.corp:3128",
 	})
-	want := "RUN export HTTPS_PROXY='http://proxy.corp:3128' && " +
+	want := "RUN export HTTPS_PROXY='http://proxy.corp:3128' " +
+		"HTTP_PROXY='http://proxy.corp:3128' NO_PROXY='localhost,127.0.0.1' && " +
 		"curl -fsSL https://opencode.ai/install | bash"
 	if !strings.Contains(out, want) {
 		t.Fatalf("opencode install should export HTTPS_PROXY inline:\nwant: %q\nout:\n%s", want, out)
@@ -658,7 +669,8 @@ func TestGenerate_CodexInstallUsesHTTPSProxy(t *testing.T) {
 		Codex:      true,
 		HTTPSProxy: "http://proxy.corp:3128",
 	})
-	want := "RUN export HTTPS_PROXY='http://proxy.corp:3128' && " +
+	want := "RUN export HTTPS_PROXY='http://proxy.corp:3128' " +
+		"HTTP_PROXY='http://proxy.corp:3128' NO_PROXY='localhost,127.0.0.1' && " +
 		"curl -fsSL https://chatgpt.com/codex/install.sh | bash"
 	if !strings.Contains(out, want) {
 		t.Fatalf("Codex install should export HTTPS_PROXY inline:\nwant: %q\nout:\n%s", want, out)

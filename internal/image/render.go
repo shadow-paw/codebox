@@ -299,15 +299,10 @@ func renderPython(b *strings.Builder, version string) {
 // the opt-out the .NET layer applies.
 func renderClaude(b *strings.Builder, profile, httpsProxy string) {
 	b.WriteString("# Install Claude Code.\n")
-	if httpsProxy == "" {
-		b.WriteString("RUN curl -fsSL https://claude.ai/install.sh | bash\n\n")
-	} else {
-		escaped := strings.ReplaceAll(httpsProxy, "'", `'\''`)
-		fmt.Fprintf(b,
-			"RUN export HTTPS_PROXY='%s' && curl -fsSL https://claude.ai/install.sh | bash\n\n",
-			escaped,
-		)
-	}
+	fmt.Fprintf(b,
+		"RUN %scurl -fsSL https://claude.ai/install.sh | bash\n\n",
+		proxyEnvPrefix(httpsProxy),
+	)
 	b.WriteString("# Disable Claude Code telemetry and data collection.\n")
 	fmt.Fprintf(b, "RUN echo 'export DISABLE_TELEMETRY=1' >> %s\n\n", profile)
 	b.WriteString("# Pre-seed the Claude onboarding flag so the CLI does not prompt on first run.\n")
@@ -350,15 +345,10 @@ func renderClaude(b *strings.Builder, profile, httpsProxy string) {
 // needs no env-var nudge.
 func renderCodex(b *strings.Builder, httpsProxy string) {
 	b.WriteString("# Install OpenAI Codex CLI.\n")
-	if httpsProxy == "" {
-		b.WriteString("RUN curl -fsSL https://chatgpt.com/codex/install.sh | bash\n\n")
-	} else {
-		escaped := strings.ReplaceAll(httpsProxy, "'", `'\''`)
-		fmt.Fprintf(b,
-			"RUN export HTTPS_PROXY='%s' && curl -fsSL https://chatgpt.com/codex/install.sh | bash\n\n",
-			escaped,
-		)
-	}
+	fmt.Fprintf(b,
+		"RUN %scurl -fsSL https://chatgpt.com/codex/install.sh | bash\n\n",
+		proxyEnvPrefix(httpsProxy),
+	)
 }
 
 // renderOpencode installs the opencode CLI via its native installer.
@@ -381,30 +371,47 @@ func renderCodex(b *strings.Builder, httpsProxy string) {
 // pushed in afterwards by App.Create when it exists on the host.
 func renderOpencode(b *strings.Builder, profile, httpsProxy string) {
 	b.WriteString("# Install opencode.\n")
-	if httpsProxy == "" {
-		b.WriteString("RUN curl -fsSL https://opencode.ai/install | bash\n")
-	} else {
-		escaped := strings.ReplaceAll(httpsProxy, "'", `'\''`)
-		fmt.Fprintf(b,
-			"RUN export HTTPS_PROXY='%s' && curl -fsSL https://opencode.ai/install | bash\n",
-			escaped,
-		)
-	}
+	fmt.Fprintf(b,
+		"RUN %scurl -fsSL https://opencode.ai/install | bash\n",
+		proxyEnvPrefix(httpsProxy),
+	)
 	fmt.Fprintf(b, "RUN echo 'export PATH=\"$HOME/.opencode/bin:$PATH\"' >> %s && \\\n", profile)
 	fmt.Fprintf(b, "    echo 'export OPENCODE_ENABLE_TELEMETRY=0' >> %s\n\n", profile)
 }
 
-// renderHTTPSProxy appends `export HTTPS_PROXY="<value>"` to the
-// operator's login profile so interactive shells inside the instance
-// route HTTPS through the configured proxy. The proxy is *not* set as
-// an ENV directive — image build time downloads continue to use the
+// renderHTTPSProxy appends the proxy env exports to the operator's login
+// profile so interactive shells inside the instance route through the
+// configured proxy. HTTP_PROXY mirrors HTTPS_PROXY so plain-HTTP traffic
+// takes the same route, and NO_PROXY exempts the loopback addresses so
+// in-container services reach each other directly. The proxy is *not* set
+// as an ENV directive — image build time downloads continue to use the
 // builder host's network, only the in-container shell sees the proxy.
 // Single quotes in the value are shell-escaped so the surrounding
 // `echo '...'` invocation survives an embedded apostrophe.
 func renderHTTPSProxy(b *strings.Builder, value, profile string) {
 	escaped := strings.ReplaceAll(value, "'", `'\''`)
 	b.WriteString("# HTTPS proxy for interactive shells inside the instance.\n")
-	fmt.Fprintf(b, "RUN echo 'export HTTPS_PROXY=\"%s\"' >> %s\n\n", escaped, profile)
+	fmt.Fprintf(b, "RUN echo 'export HTTPS_PROXY=\"%s\"' >> %s && \\\n", escaped, profile)
+	fmt.Fprintf(b, "    echo 'export HTTP_PROXY=\"%s\"' >> %s && \\\n", escaped, profile)
+	fmt.Fprintf(b, "    echo 'export NO_PROXY=\"localhost,127.0.0.1\"' >> %s\n\n", profile)
+}
+
+// proxyEnvPrefix returns the inline `export ... && ` prefix that routes an
+// install RUN's curl (and any sub-downloads it performs) through the
+// configured proxy, or the empty string when no proxy is set. HTTP_PROXY
+// mirrors HTTPS_PROXY and NO_PROXY exempts the loopback addresses, matching
+// the login-profile exports renderHTTPSProxy emits. Single quotes in the
+// value are shell-escaped so the surrounding `export ...='...'` wrapper
+// survives an embedded apostrophe.
+func proxyEnvPrefix(httpsProxy string) string {
+	if httpsProxy == "" {
+		return ""
+	}
+	escaped := strings.ReplaceAll(httpsProxy, "'", `'\''`)
+	return fmt.Sprintf(
+		"export HTTPS_PROXY='%s' HTTP_PROXY='%s' NO_PROXY='localhost,127.0.0.1' && ",
+		escaped, escaped,
+	)
 }
 
 // renderPodman configures rootless Podman for the in-container user.
