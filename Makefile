@@ -9,7 +9,7 @@ GOLANGCI_LINT := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
 GOVULNCHECK   := golang.org/x/vuln/cmd/govulncheck@v1.3.0
 
 .DEFAULT_GOAL := build
-.PHONY: deps format lint test audit build clean
+.PHONY: deps format lint test audit build install clean
 
 deps: ## Download and tidy module dependencies.
 	go mod download
@@ -32,6 +32,10 @@ audit: ## Audit dependencies for known vulnerabilities.
 build: ## Build the codebox binary into ./bin.
 	mkdir -p bin
 	go build -o bin/$(BIN) ./cmd/$(BIN)
+
+install: build
+	mkdir -p ~/.local/bin/
+	install -m 0755 bin/codebox ~/.local/bin/codebox
 
 clean: ## Remove build artifacts.
 	rm -rf bin/$(BIN)
