@@ -53,6 +53,7 @@ func (a *App) Push(ctx context.Context, stdout, stderr io.Writer, req PushReques
 		instanceKeys: req.InstanceKeys,
 		src:          local,
 		dst:          dst,
+		extra:        []string{copyUnsafeLinks},
 	})
 }
 
@@ -110,6 +111,9 @@ type transferRequest struct {
 	instanceKeys []string
 	src          string
 	dst          string
+	// extra holds direction-specific rsync flags (Push adds
+	// copyUnsafeLinks; Pull adds none).
+	extra []string
 }
 
 // transfer is the shared body of Push and Pull. It validates the
@@ -144,48 +148,26 @@ func (a *App) transfer(
 			req.instance, instancePort)
 	}
 
-	rsyncCmd := buildRsyncCommand(req.remote, hostPort,
-		expandHomeAll(req.instanceKeys, a.home), req.src, req.dst)
+	rsyncCmd := rsyncCommand(req.remote, hostPort,
+		expandHomeAll(req.instanceKeys, a.home), req.extra, []string{req.src}, req.dst)
 	writeRsyncBlock(stdout, rsyncCmd)
 
 	return a.runners("").Run(ctx, rsyncCmd, nil, stdout, stderr)
 }
 
-// buildRsyncCommand assembles an `rsync ... -e ssh ... SRC DST` shell
-// command. The ssh transport is embedded as a single shell-quoted
-// argument to `-e`; tokens within it (the key path, the jump host)
-// are themselves single-quoted so they survive both the outer `sh -c`
-// unquoting and the inner tokenisation rsync performs on the `-e`
-// value. instanceKeys, when supplied, are only passed to this inner
-// ssh — the orchestrator-side runner that looked up the host port
-// already used the operator's normal ssh configuration.
-func buildRsyncCommand(remote, hostPort string, instanceKeys []string, src, dst string) string {
-	sshParts := []string{"ssh", "-o", "StrictHostKeyChecking=no"}
-	sshParts = appendIdentityArgs(sshParts, instanceKeys)
-	if remote != "" {
-		sshParts = append(sshParts, "-J", shquote(remote))
-	}
-	sshParts = append(sshParts, "-p", hostPort)
-	sshCmd := strings.Join(sshParts, " ")
-
-	parts := []string{
-		"rsync",
-		"--verbose",
-		"--archive",
-		"--compress",
-		"--update",
-		"--progress",
-		"-e", shquote(sshCmd),
-		shquote(src),
-		shquote(dst),
-	}
-	return strings.Join(parts, " ")
-}
+// copyUnsafeLinks makes rsync follow symlinks that point outside the
+// tree being copied (absolute links, or relative ones that climb out of
+// it) and send the file or directory they refer to, while symlinks that
+// stay inside the tree are kept as links. Uploads use it because an
+// outside target does not exist in the sandbox, so a copied link would
+// arrive dangling. A source-side link whose outside target is missing
+// makes rsync exit 23 ("symlink has no referent").
+const copyUnsafeLinks = "--copy-unsafe-links"
 
 // buildCredentialsRsyncCommand assembles the rsync command used by
 // App.Create to push the operator's ~/.claude/credentials.json into
-// the freshly-started container. It is identical to buildRsyncCommand
-// except for two add-ons that matter when the destination is a
+// the freshly-started container. It is the plain rsyncCommand shape
+// plus two add-ons that matter when the destination is a
 // known-sensitive single file deep in the user's home:
 //
 //   - --mkpath so /home/user/.claude is created on the receiving side
@@ -194,6 +176,36 @@ func buildRsyncCommand(remote, hostPort string, instanceKeys []string, src, dst 
 //   - --chmod=F0600 so the credentials file lands with the same mode
 //     Claude expects on the host, regardless of the source's perms.
 func buildCredentialsRsyncCommand(remote, hostPort string, instanceKeys []string, src, dst string) string {
+	return rsyncCommand(remote, hostPort, instanceKeys,
+		[]string{"--mkpath", "--chmod=F0600"}, []string{src}, dst)
+}
+
+// buildCopyRsyncCommand assembles the rsync command used by App.Create
+// for a builder.additional-copy step. It is the `file push` shape
+// (including copyUnsafeLinks) with several sources and --mkpath added,
+// so a destination directory such as .claude/skills/ is created on
+// demand even when its parents do not exist yet in the fresh instance.
+// Each exclude pattern becomes its own shell-quoted --exclude=PATTERN.
+func buildCopyRsyncCommand(remote, hostPort string, instanceKeys, excludes, srcs []string, dst string) string {
+	extra := make([]string, 0, 2+len(excludes))
+	extra = append(extra, "--mkpath", copyUnsafeLinks)
+	for _, p := range excludes {
+		extra = append(extra, shquote("--exclude="+p))
+	}
+	return rsyncCommand(remote, hostPort, instanceKeys, extra, srcs, dst)
+}
+
+// rsyncCommand assembles an `rsync ... -e ssh ... SRC... DST` shell
+// command: the common rsync flags, then extra, then the -e ssh
+// transport, then every source, and finally dst. The ssh transport is
+// embedded as a single shell-quoted argument to `-e`; tokens within it
+// (the key path, the jump host) are themselves single-quoted so they
+// survive both the outer `sh -c` unquoting and the inner tokenisation
+// rsync performs on the `-e` value. instanceKeys, when supplied, are
+// only passed to this inner ssh — the orchestrator-side runner that
+// looked up the host port already used the operator's normal ssh
+// configuration.
+func rsyncCommand(remote, hostPort string, instanceKeys, extra, srcs []string, dst string) string {
 	sshParts := []string{"ssh", "-o", "StrictHostKeyChecking=no"}
 	sshParts = appendIdentityArgs(sshParts, instanceKeys)
 	if remote != "" {
@@ -202,19 +214,15 @@ func buildCredentialsRsyncCommand(remote, hostPort string, instanceKeys []string
 	sshParts = append(sshParts, "-p", hostPort)
 	sshCmd := strings.Join(sshParts, " ")
 
-	parts := []string{
-		"rsync",
-		"--verbose",
-		"--archive",
-		"--compress",
-		"--update",
-		"--progress",
-		"--mkpath",
-		"--chmod=F0600",
-		"-e", shquote(sshCmd),
-		shquote(src),
-		shquote(dst),
+	common := []string{"rsync", "--verbose", "--archive", "--compress", "--update", "--progress"}
+	parts := make([]string, 0, len(common)+len(extra)+2+len(srcs)+1)
+	parts = append(parts, common...)
+	parts = append(parts, extra...)
+	parts = append(parts, "-e", shquote(sshCmd))
+	for _, src := range srcs {
+		parts = append(parts, shquote(src))
 	}
+	parts = append(parts, shquote(dst))
 	return strings.Join(parts, " ")
 }
 

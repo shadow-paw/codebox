@@ -173,7 +173,7 @@ func resolveMountDir(in, instance, home string) (string, error) {
 		}
 		return filepath.Join(cwd, ".codebox", instance), nil
 	}
-	expanded := expandHome(in, home)
+	expanded := filepath.Clean(expandHome(in, home))
 	if filepath.IsAbs(expanded) {
 		return expanded, nil
 	}

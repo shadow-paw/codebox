@@ -32,8 +32,14 @@ type Config struct {
 	// directly by `codebox create` (and `codebox workflow`) instead of
 	// being injected into the command line. Both the global and project
 	// configs contribute; see ResolveAdditionalRun.
+	//
+	// AdditionalCopy lists files or directories on the operator's machine
+	// that `codebox create` (and `codebox workflow`) copy into the
+	// instance right after it starts, the same way `codebox file push`
+	// does. Both configs contribute; see ResolveAdditionalCopy.
 	Builder struct {
-		AdditionalRun []string `yaml:"additional-run"`
+		AdditionalRun  []string   `yaml:"additional-run"`
+		AdditionalCopy []CopyStep `yaml:"additional-copy"`
 	} `yaml:"builder"`
 
 	// Git holds project-level git defaults.

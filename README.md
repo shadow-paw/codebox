@@ -229,6 +229,18 @@ builder:
   additional-run:
     - echo $(whoami)
 ```
+To seed a new sandbox with files from your machine — your agent skills,
+dotfiles — list them under `builder.additional-copy`; they are copied in
+right after the instance starts, the same way `codebox file push` does:
+```yaml
+builder:
+  additional-copy:
+    - from: ~/.claude/skills/   # file, directory or glob; ~ is your home
+      to: .claude/skills/       # directory or pathname inside the instance (under /home/user)
+      exclude:                  # optional: one pattern or a list
+        - synced/
+        - find-skills/
+```
 
 
 For the full picture:

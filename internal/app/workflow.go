@@ -48,6 +48,10 @@ type WorkflowRequest struct {
 	// AdditionalRun forwards the builder.additional-run custom build
 	// steps to the underlying Create; see CreateRequest.AdditionalRun.
 	AdditionalRun []string
+
+	// AdditionalCopy forwards the builder.additional-copy steps to the
+	// underlying Create; see CreateRequest.AdditionalCopy.
+	AdditionalCopy []CopyStep
 }
 
 // Workflow is a shortcut that chains create, git push, and shell.
@@ -99,6 +103,7 @@ func (a *App) Workflow(
 		Tmux:                req.Tmux,
 		Podman:              req.Podman,
 		AdditionalRun:       req.AdditionalRun,
+		AdditionalCopy:      req.AdditionalCopy,
 	}); err != nil {
 		return err
 	}

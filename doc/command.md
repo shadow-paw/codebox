@@ -102,8 +102,9 @@ project config beats global config — see
 The same toggle/override applies to every bool flag (`--podman`, `--tmux`,
 the `*-credentials` flags, …).
 
-The `--help` output for `create` ends with six footer sections that
-restate the legal values for each kind of flag:
+The `--help` output for `create` ends with seven footer sections that
+restate the legal values for each kind of flag and the config keys that
+shape a new instance:
 
 - **Orchestrators** — values accepted by `--orchestrator`.
 - **OS** — values accepted by `--os`, with a human-readable label.
@@ -111,6 +112,9 @@ restate the legal values for each kind of flag:
 - **Agents** — coding-agent install flags.
 - **Tools** — other tool install flags.
 - **Network** — proxy and other network-related knobs.
+- **Config** — the `builder.additional-run` and `builder.additional-copy`
+  `.codebox.conf` keys (custom build steps and files copied into the
+  instance right after it starts).
 
 ### `codebox delete INSTANCE`
 
@@ -351,6 +355,9 @@ codebox file pull demo \
 ### `codebox file push INSTANCE`
 
 Copy a file or directory from the local machine up to a sandbox instance.
+Symlinks that point outside the copied tree are followed (their targets
+are copied); links inside it stay links — see
+[file transfer](#file-push-and-file-pull-file-transfer).
 
 ```
 codebox file push demo \
@@ -616,7 +623,9 @@ Flags (in help order):
 | `--tmux`                | bool   | `false`     | Install tmux and label the container `tmux=true`; the workflow's `shell` step launches it in `~/source`. Accepts `--tmux` or `--tmux=true|false`. |
 
 Like `create`, the `--help` output for `workflow` ends with the same
-six footer sections restating the legal values for each kind of flag.
+seven footer sections (including **Config**), and `builder.additional-run` /
+`builder.additional-copy` from `.codebox.conf` apply to its `create` step
+exactly as they do to `create`.
 
 ### `codebox completion SHELL`
 
@@ -705,7 +714,26 @@ For each invocation the use-case layer performs, in order:
    invocation fails with a UID/GID range mismatch. It runs via the
    engine's own `exec` so it does not wait on the in-container sshd.
 
-5. **Success line.** A copy-paste-ready `codebox shell` command is
+5. **Post-start file pushes.** Agent configs and credentials requested by
+   `--claude-credentials`, `--codex`, `--codex-credentials`,
+   `--opencode`, and `--opencode-credentials` are rsynced in (see the
+   transfer sections below). Then every `builder.additional-copy`
+   entry from `.codebox.conf` is copied in, one rsync per entry, using
+   the [`file push`](#file-push-and-file-pull-file-transfer) command
+   plus `--mkpath` (it already includes `--copy-unsafe-links`) and one
+   `--exclude=PATTERN` per pattern in the optional `exclude` (one
+   pattern or a list, e.g. `synced/`, `find-skills/`). `from` is
+   `~`-expanded and globbed on the operator's machine (a trailing `/`
+   copies a directory's contents); `to` is a
+   directory or pathname inside the instance, passed to rsync as-is
+   like `--instance-path` (relative paths are under `/home/user`;
+   missing parent directories are created). Sources are resolved
+   before step 1, so an entry that matches nothing fails before any
+   container work. Project entries are copied before global entries
+   (the `builder.additional-run` order). See
+   [Configuration](config.md#builderadditional-copy--files-copied-into-a-new-instance).
+
+6. **Success line.** A copy-paste-ready `codebox shell` command is
    printed on the line after a one-line success message, indented by
    two spaces. `--orchestrator`, `--remote`, and `--instance-key` are
    included only when the operator supplied a non-default value:
@@ -1132,6 +1160,7 @@ performs, in order:
 
    ```
    rsync --verbose --archive --compress --update --progress \
+     [--copy-unsafe-links] \
      -e 'ssh -o StrictHostKeyChecking=no [-i KEY] [-J Remote] -p PORT' \
      SRC DST
    ```
@@ -1145,7 +1174,18 @@ performs, in order:
    - `SRC` and `DST` are oriented per command: `file push` sends
      `LOCAL → user@localhost:INSTANCE_PATH`, `file pull` sends
      `user@localhost:INSTANCE_PATH → LOCAL`. The local path is
-     `~`-expanded before being passed to rsync.
+     `~`-expanded before being passed to rsync. A trailing `/` is
+     preserved through the expansion, so `~/dir/` still means "the
+     contents of dir" to rsync.
+   - **Symlinks.** `file push` adds `--copy-unsafe-links`: a symlink
+     that points *outside* the tree being copied (an absolute link, or a
+     relative one that climbs out of it) is replaced by the file or
+     directory it refers to, because that target does not exist inside
+     the sandbox. Symlinks that stay inside the tree are copied as
+     links. A `--local-path` that is itself a symlink is followed. An
+     outside link whose target is missing makes rsync fail with
+     `symlink has no referent` (exit code 23). `file pull` does not
+     add the flag — links on the instance are copied as links.
 
 Both `--local-path` and `--instance-path` are required; omitting
 either fails fast with a flag-name error before any orchestrator

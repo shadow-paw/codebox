@@ -160,7 +160,13 @@ func parsePortLines(s string) string {
 // When tmux is true the remote command launches tmux (with a horizontal
 // split) instead of a bare login shell; a non-empty agent is run in the
 // right-hand pane. See shellRemoteCommand.
-func buildShellSSHCommand(remote, hostPort string, instanceKeys []string, ports []string, tmux bool, agent string) string {
+func buildShellSSHCommand(
+	remote, hostPort string,
+	instanceKeys []string,
+	ports []string,
+	tmux bool,
+	agent string,
+) string {
 	parts := []string{"ssh", "-t", "-o", "StrictHostKeyChecking=no"}
 	parts = appendIdentityArgs(parts, instanceKeys)
 	for _, p := range ports {

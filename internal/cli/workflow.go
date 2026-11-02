@@ -153,7 +153,7 @@ func runWorkflow(
 	if err != nil {
 		return err
 	}
-	additionalRun, err := builderAdditionalRun(home)
+	builder, err := loadBuilderConfig(home)
 	if err != nil {
 		return err
 	}
@@ -179,6 +179,7 @@ func runWorkflow(
 		Psql:                opts.psql,
 		Tmux:                opts.tmux,
 		Podman:              opts.podman,
-		AdditionalRun:       additionalRun,
+		AdditionalRun:       builder.additionalRun,
+		AdditionalCopy:      builder.additionalCopy,
 	})
 }

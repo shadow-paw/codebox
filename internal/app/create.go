@@ -111,6 +111,13 @@ type CreateRequest struct {
 	// late build stage, after the toolchains/agents/tools and before the
 	// SSH key; see image.Options.AdditionalRun.
 	AdditionalRun []string
+
+	// AdditionalCopy carries the builder.additional-copy steps: files or
+	// directories on the operator's machine copied into the instance
+	// once it is running, the same way `codebox file push` does. Each
+	// step's sources are resolved (~ expansion, glob) before the image
+	// build, so one that matches nothing fails fast.
+	AdditionalCopy []CopyStep
 }
 
 // Create provisions a sandbox instance: it confirms the instance does
@@ -135,6 +142,14 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 		if _, err := os.Stat(claudeCredentialsPath(a.home)); err != nil {
 			return fmt.Errorf("--claude-credentials: %w", err)
 		}
+	}
+
+	// Resolve builder.additional-copy up front for the same reason: a
+	// source that matches nothing (or a malformed entry) should fail
+	// before the image build, not after it.
+	copies, err := resolveCopySteps(req.AdditionalCopy, a.home)
+	if err != nil {
+		return err
 	}
 
 	authKey, err := a.resolveAuthorizedKeys(req.InstanceKeys)
@@ -216,6 +231,14 @@ func (a *App) Create(ctx context.Context, w io.Writer, req CreateRequest) error 
 	}
 	if req.Opencode && req.OpencodeCredentials {
 		if err := a.pushOpencodeCredentials(ctx, w, rnr, eng, req); err != nil {
+			return err
+		}
+	}
+
+	// builder.additional-copy runs last, after the agent configs above;
+	// steps arrive project-first, then global (see settings).
+	if len(copies) > 0 {
+		if err := a.pushAdditionalCopies(ctx, w, rnr, eng, req, copies); err != nil {
 			return err
 		}
 	}
@@ -418,19 +441,38 @@ func (a *App) pushFile(
 	req CreateRequest,
 	label, src, dst string,
 ) error {
-	var portOut, portErr bytes.Buffer
-	if err := rnr.Run(ctx, eng.HostPort(req.Instance), nil, &portOut, &portErr); err != nil {
-		return wrapRunErr("look up host port", err, &portErr)
-	}
-	hostPort := parsePortLines(portOut.String())
-	if hostPort == "" {
-		return fmt.Errorf("instance %q is not exposing port %s; is it running?",
-			req.Instance, instancePort)
+	hostPort, err := lookupHostPort(ctx, rnr, eng, req.Instance)
+	if err != nil {
+		return err
 	}
 
 	fullDst := fmt.Sprintf("%s@localhost:%s", instanceUser, dst)
 	rsyncCmd := buildCredentialsRsyncCommand(req.Remote, hostPort,
 		expandHomeAll(req.InstanceKeys, a.home), src, fullDst)
+	return a.runRsyncWithRetry(ctx, w, label, rsyncCmd)
+}
+
+// lookupHostPort returns the host-side port the orchestrator published
+// for the instance's in-container sshd.
+func lookupHostPort(ctx context.Context, rnr CommandRunner, eng *container.Engine, instance string) (string, error) {
+	var portOut, portErr bytes.Buffer
+	if err := rnr.Run(ctx, eng.HostPort(instance), nil, &portOut, &portErr); err != nil {
+		return "", wrapRunErr("look up host port", err, &portErr)
+	}
+	hostPort := parsePortLines(portOut.String())
+	if hostPort == "" {
+		return "", fmt.Errorf("instance %q is not exposing port %s; is it running?",
+			instance, instancePort)
+	}
+	return hostPort, nil
+}
+
+// runRsyncWithRetry announces label, echoes rsyncCmd in a separator
+// block, and runs it locally so progress streams to w. A failed first
+// attempt — most often the freshly-started sshd not accepting
+// connections yet — is retried exactly once after
+// claudeCredentialsRetryDelay.
+func (a *App) runRsyncWithRetry(ctx context.Context, w io.Writer, label, rsyncCmd string) error {
 	_, _ = fmt.Fprintf(w, "%s...\n", label)
 	writeRsyncBlock(w, rsyncCmd)
 
@@ -676,7 +718,14 @@ func expandHome(p, home string) string {
 		return home
 	}
 	if strings.HasPrefix(p, "~/") {
-		return filepath.Join(home, p[2:])
+		out := filepath.Join(home, p[2:])
+		// Keep a trailing slash: rsync reads "dir/" as "the contents of
+		// dir" and "dir" as "dir itself", so dropping it would change
+		// what `file push` and builder.additional-copy transfer.
+		if strings.HasSuffix(p, "/") && !strings.HasSuffix(out, "/") {
+			out += "/"
+		}
+		return out
 	}
 	return p
 }

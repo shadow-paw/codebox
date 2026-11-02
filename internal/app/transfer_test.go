@@ -41,7 +41,7 @@ func TestPush_HappyPath_Local(t *testing.T) {
 		t.Errorf("call[1] should be port lookup, got %q", fr.calls[1].cmd)
 	}
 
-	wantRsync := "rsync --verbose --archive --compress --update --progress " +
+	wantRsync := "rsync --verbose --archive --compress --update --progress --copy-unsafe-links " +
 		"-e 'ssh -o StrictHostKeyChecking=no -p 33000' " +
 		"'./payload' 'user@localhost:/workspace/in'"
 	if fr.calls[2].cmd != wantRsync {
@@ -330,6 +330,7 @@ func TestPull_HappyPath_Local(t *testing.T) {
 		t.Fatalf("Pull: %v", err)
 	}
 
+	// Pull keeps symlinks as links: --copy-unsafe-links is push-only.
 	wantRsync := "rsync --verbose --archive --compress --update --progress " +
 		"-e 'ssh -o StrictHostKeyChecking=no -p 33000' " +
 		"'user@localhost:/workspace/out' './results'"

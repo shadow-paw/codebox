@@ -30,8 +30,12 @@ args:
   create:         # flags injected into `create` and `workflow`
     - ...
 builder:
-  additional-run: # custom RUN steps appended to the generated image build
+  additional-run:  # custom RUN steps appended to the generated image build
     - ...
+  additional-copy: # files/dirs copied into the instance right after it starts
+    - from: ...
+      to: ...
+      exclude: ... # optional: one pattern or a list
 port-forward:     # forwards for `codebox port-forward`
   - ...
 git:
@@ -161,6 +165,94 @@ failure rather than a config error. `codebox create` echoes the full
 generated Dockerfile before building, so you can see exactly where the
 steps land.
 
+## `builder.additional-copy` — files copied into a new instance
+
+Some setup is easier to copy than to build — your own agent skills,
+dotfiles, a local fixtures directory. List them under
+`builder.additional-copy` and `codebox create` (and `codebox workflow`)
+copies each one into the instance **right after it starts**, before the
+"is ready" line — the same way `codebox file push` would:
+
+```yaml
+# ~/.codebox.conf
+builder:
+  additional-copy:
+    - from: ~/.claude/skills/
+      to: .claude/skills/
+      exclude:
+        - synced/
+        - find-skills/
+    - from: ~/notes/*.md
+      to: ~/notes/
+    - from: ~/.config/git/ignore
+      to: .config/git/ignore
+```
+
+Each entry has two required keys, `from` and `to`, and an optional
+`exclude`:
+
+- **`from`** — a file, directory, or glob pattern on your machine. A
+  leading `~` is your home directory; a relative path is resolved
+  against the current directory. The usual glob syntax works (`*`, `?`,
+  `[...]`), and every match is copied. A **trailing `/`** copies the
+  directory's *contents* (rsync semantics), so `~/.claude/skills/` →
+  `.claude/skills/` mirrors the skills directory; without the slash the
+  directory itself is copied into the destination
+  (`.claude/skills/skills/`).
+- **`to`** — the destination **directory or pathname** inside the
+  instance, passed to rsync as-is (exactly like `file push
+  --instance-path`). A relative path (or one starting with `~/`) is under
+  the in-container user's home, `/home/user`. Missing parent directories
+  are created. How rsync reads it:
+  - a directory source, several files, or a `to` ending in `/` — `to`
+    is a directory and the sources land inside it;
+  - exactly one file copied to a `to` without a trailing `/` that is not
+    an existing directory — `to` is the new file's pathname, so
+    `.config/git/ignore` above is written as that file.
+
+  rsync counts the files *actually transferred*, so a glob that happens
+  to match one file, or one whose other matches are all excluded, is
+  written as the pathname `to`. When `from` is a glob, end `to` with `/`.
+- **`exclude`** — optional; one pattern (`exclude: synced/`) or a list of
+  patterns for files and directories to skip, each passed to rsync as its
+  own `--exclude=PATTERN` (standard rsync filter syntax):
+  - a trailing `/` (`synced/`, `find-skills/`) — matches directories
+    only, at any depth, skipping everything under them;
+  - a leading `/` (`/synced/`) — anchored to the root of the copy (inside
+    a `from` ending in `/`, that is the directory's top level);
+  - no `/` in the pattern (`*.log`, `.DS_Store`) — matches that name at
+    any depth, including the top-level files a glob `from` matched;
+  - `*` stays within one path segment, `**` spans directories
+    (`cache/**/*.tmp`), and `?` / `[...]` work as usual.
+
+  Quote patterns that start with `*` in YAML (`"*.log"`), since a bare
+  leading `*` is YAML alias syntax.
+
+Every entry is resolved **before** the image is built, so a `from`
+that matches nothing, or an entry missing `from` or `to`, fails the
+command up front instead of after a long build. Each entry becomes one
+rsync — `codebox file push`'s command plus `--mkpath` and the
+`--exclude` patterns — echoed before it runs, and retried once if the
+freshly-started sshd is not ready yet. The copies run after the agent
+config/credential pushes (`--claude-credentials`, …).
+
+Symlinks are handled like `file push` (`--copy-unsafe-links`): a link
+that points outside what is being copied — e.g. a skill in
+`~/.claude/skills/` symlinked from a git checkout elsewhere — is
+replaced by the file or directory it refers to, since that target does
+not exist in the sandbox; links that stay inside the copy are kept as
+links. A `from` that is itself a symlink is followed. An outside link
+whose target is missing fails the copy (`symlink has no referent`), so
+remove it or list it under `exclude`.
+
+The global `~/.codebox.conf` and the project `./.codebox.conf` both
+contribute: the **project entries are copied first, then the global
+entries** — the same order as `builder.additional-run`. Because the rsync
+runs with `--update`, a later copy onto the same path replaces the
+earlier file only when its source is newer. Entries with neither `from`
+nor `to` are ignored. Files are copied into the running instance only —
+they are never baked into the image.
+
 ## `port-forward` — forwards for `codebox port-forward`
 
 The `port-forward` key lists the forwards that `codebox port-forward`
@@ -241,10 +333,10 @@ explicit CLI flag  >  project .codebox.conf  >  global ~/.codebox.conf
 This precedence governs the flag sections. The remaining keys are not
 flags and follow their own rules:
 
-- **List keys merge, project-first.** `builder.additional-run` and
-  `port-forward` concatenate the project list ahead of the global one
-  (`port-forward` also deduplicates), so both files always contribute
-  and the project's entries come first.
+- **List keys merge, project-first.** `builder.additional-run`,
+  `builder.additional-copy`, and `port-forward` concatenate the project
+  list ahead of the global one (`port-forward` also deduplicates), so
+  both files always contribute and the project's entries come first.
 - **`git.push-from` is a single value.** The project's value wins when
   set; the global value is only a fallback.
 

@@ -71,6 +71,26 @@ Network:
   --https-proxy=URL   Export HTTPS_PROXY (and a matching HTTP_PROXY, plus
                       NO_PROXY=localhost,127.0.0.1) from the in-container user login profile
                       (also exported during agent installs so their curl pipelines route through it)
+
+Config (.codebox.conf, project and/or ~/.codebox.conf):
+  builder:
+    additional-run:      # extra RUN steps appended to the image build (as root)
+      - apt-get update && apt-get install -y graphviz
+    additional-copy:     # copied into the instance right after it starts (like file push)
+      - from: ~/.claude/skills/
+        to: .claude/skills/
+        exclude:         # optional: one pattern or a list
+          - synced/
+          - find-skills/
+
+  additional-copy: from is a local file, directory or glob (*, ?, [...]); a leading
+  ~ is your home. A trailing / on from copies the directory's contents. to is a
+  directory or pathname inside the instance (relative to /home/user; missing
+  parent directories are created). exclude takes rsync --exclude patterns:
+  "synced/" skips that directory at any depth, "/synced/" only at the top of
+  the copy, "*.log" matching files anywhere. Symlinks pointing outside the copy
+  are followed, like file push (rsync --copy-unsafe-links).
+  Project entries run before global ones.
 `
 
 const createHelpTemplate = `{{with (or .Long .Short)}}{{. | trimTrailingWhitespaces}}
@@ -162,22 +182,33 @@ func registerCreateValueCompletions(cmd *cobra.Command) {
 	}
 }
 
-// builderAdditionalRun loads the global and project .codebox.conf files
-// and returns their merged builder.additional-run steps (project first,
-// then global). It is the create/workflow counterpart to
-// configuredPushSource: builder.additional-run is structured data, not a
-// flag, so it cannot ride the args-injection path and is read here
-// instead.
-func builderAdditionalRun(home string) ([]string, error) {
+// builderConfig is the merged builder section of the .codebox.conf files,
+// in the shape the app layer consumes.
+type builderConfig struct {
+	additionalRun  []string
+	additionalCopy []app.CopyStep
+}
+
+// loadBuilderConfig loads the global and project .codebox.conf files and
+// returns their merged builder.additional-run and builder.additional-copy
+// lists (both project first, then global).
+// It is the create/workflow counterpart to configuredPushSource: the
+// builder section is structured data, not flags, so it cannot ride the
+// args-injection path and is read here instead.
+func loadBuilderConfig(home string) (builderConfig, error) {
 	workDir, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("locate current directory: %w", err)
+		return builderConfig{}, fmt.Errorf("locate current directory: %w", err)
 	}
 	global, project, err := settings.Load(home, workDir)
 	if err != nil {
-		return nil, err
+		return builderConfig{}, err
 	}
-	return settings.ResolveAdditionalRun(global, project), nil
+	cfg := builderConfig{additionalRun: settings.ResolveAdditionalRun(global, project)}
+	for _, s := range settings.ResolveAdditionalCopy(global, project) {
+		cfg.additionalCopy = append(cfg.additionalCopy, app.CopyStep{From: s.From, To: s.To, Exclude: s.Exclude})
+	}
+	return cfg, nil
 }
 
 func runCreate(ctx context.Context, out io.Writer, opts createOpts) error {
@@ -185,7 +216,7 @@ func runCreate(ctx context.Context, out io.Writer, opts createOpts) error {
 	if err != nil {
 		return fmt.Errorf("locate home directory: %w", err)
 	}
-	additionalRun, err := builderAdditionalRun(home)
+	builder, err := loadBuilderConfig(home)
 	if err != nil {
 		return err
 	}
@@ -210,6 +241,7 @@ func runCreate(ctx context.Context, out io.Writer, opts createOpts) error {
 		Psql:                opts.psql,
 		Tmux:                opts.tmux,
 		Podman:              opts.podman,
-		AdditionalRun:       additionalRun,
+		AdditionalRun:       builder.additionalRun,
+		AdditionalCopy:      builder.additionalCopy,
 	})
 }

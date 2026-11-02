@@ -599,6 +599,10 @@ func TestCreate_HelpShowsSupportedSections(t *testing.T) {
 		"--opencode-credentials",
 		"PostgreSQL",
 		"--https-proxy=URL",
+		"Config (.codebox.conf",
+		"additional-run:",
+		"additional-copy:",
+		"exclude:",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("create --help missing %q", want)

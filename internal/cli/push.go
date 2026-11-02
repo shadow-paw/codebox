@@ -21,9 +21,13 @@ func newPushCmd() *cobra.Command {
 	var opts pushOpts
 
 	cmd := &cobra.Command{
-		Use:               "push INSTANCE",
-		Short:             "Copy files from the local machine to a sandbox instance",
-		Long:              "Copy a file or directory from the local machine up to a sandbox instance.",
+		Use:   "push INSTANCE",
+		Short: "Copy files from the local machine to a sandbox instance",
+		Long: "Copy a file or directory from the local machine up to a sandbox instance.\n\n" +
+			"Symlinks that point outside the copied tree (absolute links, or relative\n" +
+			"ones that climb out of it) are followed and their targets copied, since\n" +
+			"those targets do not exist in the sandbox; links inside the tree are kept\n" +
+			"as links (rsync --copy-unsafe-links).",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeInstances,
 		RunE: func(cmd *cobra.Command, args []string) error {
