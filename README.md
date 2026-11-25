@@ -179,17 +179,46 @@ codebox git pull demo issue-1234                # issue-1234 → demo/issue-1234
 codebox delete demo                             # stop and remove the sandbox
 ```
 
-### Advanced usage
+## Advanced usage
+### Global Settings
+Create user global setting `~/.codebox.conf`.
+```yaml
+args:
+  all:
+    - orchestrator=podman
+    # - orchestrator=docker
+    - instance-key=~/.ssh/id_ed25519
+  create:
+    - claude
+    - claude-credentials
+    # - codex
+    # - codex-credentials
+```
 
-Create a `.codebox.conf`:
+To seed a new sandbox with files from your machine — your agent skills,
+dotfiles — list them under `builder.additional-copy`; they are copied in
+right after the instance starts, the same way `codebox file push` does:
+```yaml
+builder:
+  additional-copy:
+    - from: ~/.claude/skills/   # file, directory or glob; ~ is your home
+      to: .claude/skills/       # directory or pathname inside the instance (under /home/user)
+      exclude:                  # optional: one pattern or a list
+        - synced/
+        - find-skills/
+```
+
+### Project Settings
+Create a project specific `.codebox.conf` in your git repository directory:
 ```yaml
 args:
   create:
     - python=3.14
-    - claude
-    - claude-credentials
 git:
   push-from: origin/main
+port-forward:
+  - 13000:3000
+  - 13001:3001
 ```
 then use the `workflow` shortcut:
 ```sh
@@ -198,20 +227,9 @@ codebox workflow issue-1234                     # create, git push, and shell in
 codebox git pull issue-1234                     # branch defaults to the instance name
 codebox delete issue-1234                       # stop and remove the sandbox
 ```
-Agent flags are on/off toggles, so a `.codebox.conf` default can be turned
-off for a single run from the command line:
-```sh
-codebox workflow origin/main:issue-1234 --claude=false   # skip the Claude install this time
-```
 > HINT: You can run multiple sandboxes at the same time.
 
-To reach services running inside a sandbox, declare the forwards in a
-`.codebox.conf` (`local:remote`, or a bare port for `port:port`):
-```yaml
-port-forward:
-  - 13000:3000
-  - 13001:3001
-```
+To reach services running inside a sandbox:
 ```sh
 codebox port-forward demo                       # hold the forwards open until Ctrl-C
 ```
@@ -229,19 +247,6 @@ builder:
   additional-run:
     - echo $(whoami)
 ```
-To seed a new sandbox with files from your machine — your agent skills,
-dotfiles — list them under `builder.additional-copy`; they are copied in
-right after the instance starts, the same way `codebox file push` does:
-```yaml
-builder:
-  additional-copy:
-    - from: ~/.claude/skills/   # file, directory or glob; ~ is your home
-      to: .claude/skills/       # directory or pathname inside the instance (under /home/user)
-      exclude:                  # optional: one pattern or a list
-        - synced/
-        - find-skills/
-```
-
 
 For the full picture:
 
