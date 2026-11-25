@@ -22,6 +22,10 @@ func withFakeHome(t *testing.T) string {
 	}
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	// Hide every host binary (podman, docker, ssh, sh) so a command that
+	// gets past flag validation fails fast instead of building real images
+	// or dialling real hosts on a developer machine.
+	t.Setenv("PATH", t.TempDir())
 	return home
 }
 
