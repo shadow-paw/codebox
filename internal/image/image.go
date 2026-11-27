@@ -33,7 +33,7 @@ type Options struct {
 
 	// Optional language toolchains. An empty string disables the
 	// corresponding install layer; a non-empty string is passed
-	// through to the installer verbatim (e.g. "3.13", "24", "1.26.0",
+	// through to the installer verbatim (e.g. "3.13", "24", "1.26",
 	// "10"). Validation of the value itself is left to the installer.
 	Python string
 	Node   string
@@ -97,8 +97,10 @@ func SupportedPython() []string { return append([]string(nil), supportedPython..
 // `--node`. See SupportedPython for the sharing/copy contract.
 func SupportedNode() []string { return append([]string(nil), supportedNode...) }
 
-// SupportedGolang returns the version strings Generate will accept
-// for `--golang`. See SupportedPython for the sharing/copy contract.
+// SupportedGolang returns the Go minor release lines Generate will
+// accept for `--golang`. Each line may also be given with an exact
+// patch suffix ("1.26.3"); see SupportedPython for the sharing/copy
+// contract.
 func SupportedGolang() []string { return append([]string(nil), supportedGolang...) }
 
 // SupportedDotnet returns the version strings Generate will accept
@@ -133,20 +135,45 @@ func validateVersions(opts Options) error {
 	checks := []struct {
 		flag, value string
 		known       []string
+		valid       func(known []string, v string) bool
 	}{
-		{"python", opts.Python, supportedPython},
-		{"node", opts.Node, supportedNode},
-		{"golang", opts.Golang, supportedGolang},
-		{"dotnet", opts.Dotnet, supportedDotnet},
+		{"python", opts.Python, supportedPython, slices.Contains[[]string]},
+		{"node", opts.Node, supportedNode, slices.Contains[[]string]},
+		{"golang", opts.Golang, supportedGolang, validGolangVersion},
+		{"dotnet", opts.Dotnet, supportedDotnet, slices.Contains[[]string]},
 	}
 	for _, c := range checks {
 		if c.value == "" {
 			continue
 		}
-		if !slices.Contains(c.known, c.value) {
+		if !c.valid(c.known, c.value) {
 			return fmt.Errorf("image: unsupported %s version %q (known: %s)",
 				c.flag, c.value, strings.Join(c.known, ", "))
 		}
 	}
 	return nil
+}
+
+// validGolangVersion reports whether v names a supported Go minor line
+// ("1.26") or an exact patch release on one ("1.26.3"). The patch must
+// be a plain decimal number so the value is safe to splice into the
+// rendered shell and download URL.
+func validGolangVersion(lines []string, v string) bool {
+	if slices.Contains(lines, v) {
+		return true
+	}
+	i := strings.LastIndexByte(v, '.')
+	if i < 0 || !slices.Contains(lines, v[:i]) {
+		return false
+	}
+	patch := v[i+1:]
+	if patch == "" || (len(patch) > 1 && patch[0] == '0') {
+		return false
+	}
+	for _, r := range patch {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

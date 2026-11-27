@@ -190,10 +190,13 @@ var specs = map[string]spec{
 
 // Supported version sets for the optional toolchains. Generate rejects
 // values not listed here so unknown versions fail fast with a clear
-// message instead of producing an image that fails to build.
+// message instead of producing an image that fails to build. Go entries
+// are minor release lines: "1.26" resolves to the newest 1.26.x at build
+// time, and an exact "1.26.N" patch is accepted as well (see
+// validGolangVersion).
 var (
 	supportedPython = []string{"3.12", "3.13", "3.14"}
 	supportedNode   = []string{"24", "25", "26"}
-	supportedGolang = []string{"1.26.0"}
+	supportedGolang = []string{"1.26", "1.27"}
 	supportedDotnet = []string{"8", "10"}
 )

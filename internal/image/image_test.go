@@ -867,18 +867,97 @@ func TestGenerate_PodmanOmittedByDefault(t *testing.T) {
 
 func TestGenerate_GolangInstall(t *testing.T) {
 	t.Parallel()
-	out := generateOpts(t, image.Options{OS: "debian_13", Golang: "1.26.0"})
-	wants := []string{
-		"# Install Go 1.26.0",
-		"https://go.dev/dl/go1.26.0.linux-${arch}.tar.gz",
+	common := []string{
 		`case "$arch" in x86_64) arch=amd64;; aarch64) arch=arm64;;`,
-		"tar -C /usr/local -xz",
+		`f="$v.linux-$arch.tar.gz"`,
+		`curl -fsSL "https://dl.google.com/go/$f" -o "/tmp/$f"`,
+		`curl -fsSL "https://dl.google.com/go/$f.sha256")  /tmp/$f" | sha256sum -c -`,
+		`tar -C /usr/local -xzf "/tmp/$f"`,
 		`echo 'export PATH="/usr/local/go/bin:$PATH"' >> /home/user/.profile`,
 	}
-	for _, want := range wants {
-		if !strings.Contains(out, want) {
-			t.Errorf("Go layer missing %q\n%s", want, out)
-		}
+	cases := []struct {
+		name    string
+		version string
+		wants   []string
+		absent  []string
+	}{
+		{
+			name:    "exact patch",
+			version: "1.26.3",
+			wants:   []string{"# Install Go 1.26.3", `v="go1.26.3"`},
+			absent:  []string{"mode=json"},
+		},
+		{
+			name:    "minor line resolves latest patch",
+			version: "1.26",
+			wants: []string{
+				"# Install Go 1.26",
+				"https://go.dev/dl/?mode=json&include=all",
+				`grep -o '"go1\.26\.[0-9]*"'`,
+				"sort -uV | tail -n 1",
+				`echo "no Go 1.26 release found" >&2; exit 1;`,
+			},
+			absent: []string{`v="go1.26"`},
+		},
+		{
+			name:    "newer minor line resolves its own patches",
+			version: "1.27",
+			wants:   []string{"# Install Go 1.27", `grep -o '"go1\.27\.[0-9]*"'`},
+			absent:  []string{`go1\.26`},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out := generateOpts(t, image.Options{OS: "debian_13", Golang: tc.version})
+			for _, want := range append(tc.wants, common...) {
+				if !strings.Contains(out, want) {
+					t.Errorf("Go layer missing %q\n%s", want, out)
+				}
+			}
+			for _, bad := range tc.absent {
+				if strings.Contains(out, bad) {
+					t.Errorf("Go layer should not contain %q\n%s", bad, out)
+				}
+			}
+		})
+	}
+}
+
+func TestGenerate_GolangVersionValidation(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		version string
+		ok      bool
+	}{
+		{"1.26", true},
+		{"1.26.0", true},
+		{"1.26.11", true},
+		{"1.25", false},
+		{"1.25.0", false},
+		{"1.27", true},
+		{"1.27.4", true},
+		{"1.28", false},
+		{"1.28.0", false},
+		{"1.26.", false},
+		{"1.26.01", false},
+		{"1.26.x", false},
+		{"1.26.1rc1", false},
+		{"1.26.1.2", false},
+		{"1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.version, func(t *testing.T) {
+			t.Parallel()
+			var b bytes.Buffer
+			err := image.Generate(&b, image.Options{OS: "debian_13", AuthorizedKey: testKey, Golang: tc.version})
+			if tc.ok && err != nil {
+				t.Errorf("Generate(%q) = %v, want nil", tc.version, err)
+			}
+			if !tc.ok && err == nil {
+				t.Errorf("Generate(%q) succeeded, want unsupported-version error", tc.version)
+			}
+		})
 	}
 }
 
@@ -955,7 +1034,7 @@ func TestGenerate_ProfilePathPerFamily(t *testing.T) {
 		t.Run(tc.osKey, func(t *testing.T) {
 			t.Parallel()
 			out := generateOpts(t, image.Options{
-				OS: tc.osKey, Python: "3.13", Golang: "1.26.0", Dotnet: "10",
+				OS: tc.osKey, Python: "3.13", Golang: "1.26", Dotnet: "10",
 			})
 			if !strings.Contains(out, tc.profile) {
 				t.Errorf("%s should append exports to %s\n%s", tc.osKey, tc.profile, out)
@@ -1029,12 +1108,12 @@ func TestGenerate_ExtrasPosition(t *testing.T) {
 	t.Parallel()
 	out := generateOpts(t, image.Options{
 		OS: "debian_13", Python: "3.13", Node: "24",
-		Golang: "1.26.0", Dotnet: "10", Psql: true,
+		Golang: "1.26", Dotnet: "10", Psql: true,
 	})
 	sections := []string{
 		"# Init script",
 		"# System packages for the requested toolchains.",
-		"# Install Go 1.26.0",
+		"# Install Go 1.26",
 		"# Install .NET 10",
 		"USER user",
 		"# Install uv and pin the requested Python version globally.",
@@ -1062,7 +1141,7 @@ func TestGenerate_ExtrasPosition(t *testing.T) {
 func TestGenerate_UserSwitchOnlyWhenNeeded(t *testing.T) {
 	t.Parallel()
 	out := generateOpts(t, image.Options{
-		OS: "debian_13", Golang: "1.26.0", Dotnet: "10", Psql: true,
+		OS: "debian_13", Golang: "1.26", Dotnet: "10", Psql: true,
 	})
 	if strings.Contains(out, "USER user") {
 		t.Errorf("USER user should be absent when no home-scoped install is enabled\n%s", out)
@@ -1083,7 +1162,7 @@ func TestGenerate_RejectsUnsupportedVersions(t *testing.T) {
 	}{
 		{"python", image.Options{OS: "debian_13", Python: "3.10"}, "python", "3.12, 3.13, 3.14"},
 		{"node", image.Options{OS: "debian_13", Node: "20"}, "node", "24, 25, 26"},
-		{"golang", image.Options{OS: "debian_13", Golang: "1.25.0"}, "golang", "1.26.0"},
+		{"golang", image.Options{OS: "debian_13", Golang: "1.25.0"}, "golang", "1.26, 1.27"},
 		{"dotnet", image.Options{OS: "debian_13", Dotnet: "6"}, "dotnet", "8, 10"},
 	}
 	for _, tc := range cases {

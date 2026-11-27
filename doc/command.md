@@ -60,7 +60,7 @@ codebox create demo \
   --orchestrator=podman --remote=user@host --instance-key=~/.ssh/id_rsa \
   --https-proxy=http://proxy.corp:3128 \
   --os=debian_12 \
-  --python=3.14 --node=24 --golang=1.26.0 --dotnet=10 \
+  --python=3.14 --node=24 --golang=1.26 --dotnet=10 \
   --claude --claude-credentials \
   --codex --codex-credentials --opencode --opencode-credentials \
   --podman --psql --tmux
@@ -78,7 +78,7 @@ Flags (in help order):
 | `--os`                  | enum   | `debian_13`    | Base OS image (`debian_12`, `debian_13`, `ubuntu_24`, `ubuntu_26`, `redhat_10`). |
 | `--python`              | enum   | *(none)*       | Install Python at `3.12`, `3.13`, or `3.14`. |
 | `--node`                | enum   | *(none)*       | Install Node.js at major version `24`, `25`, or `26`. |
-| `--golang`              | enum   | *(none)*       | Install Go at version `1.26.0`. |
+| `--golang`              | enum   | *(none)*       | Install Go: a minor line `1.26` or `1.27` (latest patch at build time), or an exact patch such as `1.27.N`. |
 | `--dotnet`              | enum   | *(none)*       | Install .NET at version `8` or `10`. |
 | `--claude`              | bool   | `false`        | Install [Claude Code](https://claude.ai/code) via Anthropic's native installer. Also drops `/home/user/.claude.json` with the onboarding flag pre-set so the CLI does not prompt on first run inside the sandbox. |
 | `--claude-credentials`  | bool   | `false`        | After the container starts, rsync `~/.claude/.credentials.json` from the operator's machine into `/home/user/.claude/.credentials.json` inside the instance. **Ignored unless `--claude` is set.** When `--claude` is set, a missing source file fails fast (before the build). Credentials are **never** baked into the image. |
@@ -610,7 +610,7 @@ Flags (in help order):
 | `--os`                  | enum   | `debian_13` | Base OS image (`debian_12`, `debian_13`, `ubuntu_24`, `ubuntu_26`, `redhat_10`). |
 | `--python`              | enum   | *(none)*    | Install Python at `3.12`, `3.13`, or `3.14`. |
 | `--node`                | enum   | *(none)*    | Install Node.js at major version `24`, `25`, or `26`. |
-| `--golang`              | enum   | *(none)*    | Install Go at version `1.26.0`. |
+| `--golang`              | enum   | *(none)*    | Install Go: a minor line `1.26` or `1.27` (latest patch at build time), or an exact patch such as `1.27.N`. |
 | `--dotnet`              | enum   | *(none)*    | Install .NET at version `8` or `10`. |
 | `--claude`              | bool   | `false`     | Install Claude Code. |
 | `--claude-credentials`  | bool   | `false`     | Copy `~/.claude/.credentials.json` into the instance after it starts (ignored unless `--claude`). |
@@ -821,7 +821,7 @@ distros (Red Hat). Below, **PROFILE** refers to whichever file applies.
 | ---------- | -------- |
 | `--psql`   | `postgresql-client` (apt) or `postgresql` (dnf) via the distro package manager. |
 | `--tmux`   | `tmux` via the distro package manager (same name on apt and dnf). The container is additionally labelled `tmux=true`; `codebox shell` reads that label and launches tmux (horizontal split, both panes in `~/source`) on connect. Installed AI agents are recorded as their own boolean labels (e.g. `claude=true`, `codex=true`, `opencode=true`); when **exactly one** is present `codebox shell` runs that agent in the right-hand pane via a login shell. With none or several installed it cannot choose, so both panes stay plain shells. |
-| `--golang=VER` | Downloads `https://go.dev/dl/goVER.linux-${arch}.tar.gz` (arch detected from `uname -m`; `amd64` and `arm64` supported), unpacks it to `/usr/local/go`, and appends `export PATH="/usr/local/go/bin:$PATH"` to **PROFILE**. |
+| `--golang=VER` | `VER` is a supported minor line (`1.26`, `1.27`) or an exact patch on one (`1.27.3`). A minor line is resolved at build time to the newest stable patch in the release index at `https://go.dev/dl/?mode=json&include=all` (use `--rebuild` to pick up a newer patch on an existing image). Downloads `https://dl.google.com/go/goVER.linux-${arch}.tar.gz` (arch detected from `uname -m`; `amd64` and `arm64` supported), verifies it against the published `.sha256` file, unpacks it to `/usr/local/go`, and appends `export PATH="/usr/local/go/bin:$PATH"` to **PROFILE**. |
 | `--dotnet=VER` | Runs `https://dot.net/v1/dotnet-install.sh --channel VER.0 --install-dir /usr/local/dotnet`, symlinks the runner to `/usr/local/bin/dotnet`, and appends `DOTNET_ROOT`, `PATH`, and `DOTNET_CLI_TELEMETRY_OPTOUT=1` exports to **PROFILE**. |
 | `--python=VER` | Runs `https://astral.sh/uv/install.sh` as user `user`, then runs `uv python install VER && uv python pin --global VER` to download the prebuilt CPython and set it as the global default for `uv`. (The `export PATH="$HOME/.local/bin:$PATH"` line is emitted once — see `--claude`.) |
 | `--node=VER` | On dnf-family distros, first installs `libatomic` (UBI omits it and recent V8 binaries link against it). Then installs nvm (pinned to `v0.40.1`) as user `user`, and runs `nvm install VER && nvm alias default VER`. |

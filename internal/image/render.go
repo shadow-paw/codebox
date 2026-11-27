@@ -229,14 +229,33 @@ func renderAdditionalRun(b *strings.Builder, cmds []string) {
 // renderGolang installs the requested Go release into /usr/local/go and
 // appends the binary directory to user "user"'s PATH via the per-family
 // login profile file.
+//
+// version is either an exact patch ("1.26.3"), installed as-is, or a
+// minor line ("1.26"), which is resolved at build time to the newest
+// stable patch listed in the go.dev release index. Release candidates
+// ("go1.26rc1") never match the go1.X.N pattern, and sort -V orders
+// multi-digit patches correctly. The tarball is checked against the
+// .sha256 file published next to it before it is unpacked.
 func renderGolang(b *strings.Builder, version, profile string) {
 	fmt.Fprintf(b, "# Install Go %s into /usr/local/go.\n", version)
-	fmt.Fprintf(b,
-		"RUN arch=\"$(uname -m)\" && \\\n"+
-			"    case \"$arch\" in x86_64) arch=amd64;; aarch64) arch=arm64;; "+
-			"*) echo \"unsupported arch: $arch\" >&2; exit 1;; esac && \\\n"+
-			"    curl -fsSL \"https://go.dev/dl/go%s.linux-${arch}.tar.gz\" \\\n"+
-			"      | tar -C /usr/local -xz\n", version)
+	b.WriteString("RUN arch=\"$(uname -m)\" && \\\n" +
+		"    case \"$arch\" in x86_64) arch=amd64;; aarch64) arch=arm64;; " +
+		"*) echo \"unsupported arch: $arch\" >&2; exit 1;; esac && \\\n")
+	if strings.Count(version, ".") >= 2 {
+		fmt.Fprintf(b, "    v=\"go%s\" && \\\n", version)
+	} else {
+		pattern := "go" + strings.ReplaceAll(version, ".", `\.`) + `\.[0-9]*`
+		fmt.Fprintf(b,
+			"    v=\"$(curl -fsSL 'https://go.dev/dl/?mode=json&include=all' \\\n"+
+				"      | grep -o '\"%s\"' | tr -d '\"' | sort -uV | tail -n 1)\" && \\\n"+
+				"    [ -n \"$v\" ] || { echo \"no Go %s release found\" >&2; exit 1; } && \\\n",
+			pattern, version)
+	}
+	b.WriteString("    f=\"$v.linux-$arch.tar.gz\" && \\\n" +
+		"    curl -fsSL \"https://dl.google.com/go/$f\" -o \"/tmp/$f\" && \\\n" +
+		"    echo \"$(curl -fsSL \"https://dl.google.com/go/$f.sha256\")  /tmp/$f\" | sha256sum -c - && \\\n" +
+		"    tar -C /usr/local -xzf \"/tmp/$f\" && \\\n" +
+		"    rm \"/tmp/$f\"\n")
 	fmt.Fprintf(b, "RUN echo 'export PATH=\"/usr/local/go/bin:$PATH\"' >> %s\n\n", profile)
 }
 

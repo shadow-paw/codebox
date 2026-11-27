@@ -89,7 +89,7 @@ func newWorkflowCmd() *cobra.Command {
 	f.StringVar(&opts.node, "node", "",
 		"Install Node.js at this major version (24, 25, 26)")
 	f.StringVar(&opts.golang, "golang", "",
-		"Install Go at this version (1.26.0)")
+		"Install Go: a minor line (1.26, 1.27) for its latest patch, or an exact patch (1.27.N)")
 	f.StringVar(&opts.dotnet, "dotnet", "",
 		"Install .NET at this version (8, 10)")
 	f.BoolVar(&opts.claude, "claude", false,

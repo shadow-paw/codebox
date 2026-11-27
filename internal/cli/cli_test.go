@@ -494,7 +494,7 @@ func TestComplete_FlagValueCandidates(t *testing.T) {
 		{
 			name: "create --golang",
 			args: []string{"__complete", "create", "demo", "--golang", ""},
-			want: []string{"1.26.0"},
+			want: []string{"1.26", "1.27"},
 		},
 		{
 			name: "create --dotnet",
@@ -594,7 +594,7 @@ func TestCreate_HelpShowsSupportedSections(t *testing.T) {
 		"redhat_10",
 		"3.12, 3.13, 3.14",
 		"24, 25, 26",
-		"1.26.0",
+		"1.26, 1.27 (or exact 1.X.N)",
 		"Claude Code",
 		"--claude-credentials",
 		"OpenAI Codex CLI",
