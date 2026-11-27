@@ -195,7 +195,7 @@ var specs = map[string]spec{
 // time, and an exact "1.26.N" patch is accepted as well (see
 // validGolangVersion).
 var (
-	supportedPython = []string{"3.12", "3.13", "3.14"}
+	supportedPython = []string{"3.12", "3.13", "3.14", "3.15"}
 	supportedNode   = []string{"24", "25", "26"}
 	supportedGolang = []string{"1.26", "1.27"}
 	supportedDotnet = []string{"8", "10"}

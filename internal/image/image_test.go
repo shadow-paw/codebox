@@ -1160,7 +1160,7 @@ func TestGenerate_RejectsUnsupportedVersions(t *testing.T) {
 		flag  string
 		known string
 	}{
-		{"python", image.Options{OS: "debian_13", Python: "3.10"}, "python", "3.12, 3.13, 3.14"},
+		{"python", image.Options{OS: "debian_13", Python: "3.10"}, "python", "3.12, 3.13, 3.14, 3.15"},
 		{"node", image.Options{OS: "debian_13", Node: "20"}, "node", "24, 25, 26"},
 		{"golang", image.Options{OS: "debian_13", Golang: "1.25.0"}, "golang", "1.26, 1.27"},
 		{"dotnet", image.Options{OS: "debian_13", Dotnet: "6"}, "dotnet", "8, 10"},

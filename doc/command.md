@@ -76,7 +76,7 @@ Flags (in help order):
 | `--rebuild`             | bool   | `false`        | Force a rebuild of the base image even if a cached one exists. |
 | `--https-proxy`         | string | *(unset)*      | Append `export HTTPS_PROXY="<value>"` to the in-container user's login profile so interactive shells route HTTPS through the configured proxy. Other build-time downloads (apt, dnf, Go, .NET, uv, nvm) still go through the builder host's network — only the operator's shell inside the running container sees the proxy. The exception is the agent install layers (`--claude`, `--codex`, `--opencode`), which export `HTTPS_PROXY` inline so curl (and any sub-downloads the install scripts perform) route through the proxy too. The value is not validated; pass it the way curl would accept it (`http://proxy:3128`, `http://user:pw@proxy:3128`, ...). |
 | `--os`                  | enum   | `debian_13`    | Base OS image (`debian_12`, `debian_13`, `ubuntu_24`, `ubuntu_26`, `redhat_10`). |
-| `--python`              | enum   | *(none)*       | Install Python at `3.12`, `3.13`, or `3.14`. |
+| `--python`              | enum   | *(none)*       | Install Python at `3.12`, `3.13`, `3.14`, or `3.15`. |
 | `--node`                | enum   | *(none)*       | Install Node.js at major version `24`, `25`, or `26`. |
 | `--golang`              | enum   | *(none)*       | Install Go: a minor line `1.26` or `1.27` (latest patch at build time), or an exact patch such as `1.27.N`. |
 | `--dotnet`              | enum   | *(none)*       | Install .NET at version `8` or `10`. |
@@ -608,7 +608,7 @@ Flags (in help order):
 | `--rebuild`             | bool   | `false`     | Force a rebuild of the base image even if a cached one exists. |
 | `--https-proxy`         | string | *(unset)*   | Append `export HTTPS_PROXY="<value>"` to the in-container user's login profile (see [`create`](#codebox-create-instance)). |
 | `--os`                  | enum   | `debian_13` | Base OS image (`debian_12`, `debian_13`, `ubuntu_24`, `ubuntu_26`, `redhat_10`). |
-| `--python`              | enum   | *(none)*    | Install Python at `3.12`, `3.13`, or `3.14`. |
+| `--python`              | enum   | *(none)*    | Install Python at `3.12`, `3.13`, `3.14`, or `3.15`. |
 | `--node`                | enum   | *(none)*    | Install Node.js at major version `24`, `25`, or `26`. |
 | `--golang`              | enum   | *(none)*    | Install Go: a minor line `1.26` or `1.27` (latest patch at build time), or an exact patch such as `1.27.N`. |
 | `--dotnet`              | enum   | *(none)*    | Install .NET at version `8` or `10`. |

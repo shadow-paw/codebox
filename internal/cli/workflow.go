@@ -85,7 +85,7 @@ func newWorkflowCmd() *cobra.Command {
 	f.StringVar(&opts.osImage, "os", "debian_13",
 		"Base OS image (debian_12, debian_13, ubuntu_24, ubuntu_26, redhat_10)")
 	f.StringVar(&opts.python, "python", "",
-		"Install Python at this version (3.12, 3.13, 3.14)")
+		"Install Python at this version (3.12, 3.13, 3.14, 3.15)")
 	f.StringVar(&opts.node, "node", "",
 		"Install Node.js at this major version (24, 25, 26)")
 	f.StringVar(&opts.golang, "golang", "",

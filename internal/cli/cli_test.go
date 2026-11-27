@@ -484,7 +484,7 @@ func TestComplete_FlagValueCandidates(t *testing.T) {
 		{
 			name: "create --python",
 			args: []string{"__complete", "create", "demo", "--python", ""},
-			want: []string{"3.12", "3.13", "3.14"},
+			want: []string{"3.12", "3.13", "3.14", "3.15"},
 		},
 		{
 			name: "create --node",
@@ -592,7 +592,7 @@ func TestCreate_HelpShowsSupportedSections(t *testing.T) {
 		"debian_12",
 		"ubuntu_24",
 		"redhat_10",
-		"3.12, 3.13, 3.14",
+		"3.12, 3.13, 3.14, 3.15",
 		"24, 25, 26",
 		"1.26, 1.27 (or exact 1.X.N)",
 		"Claude Code",
@@ -768,7 +768,7 @@ func TestCreate_RejectsUnsupportedVersion(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("exit = 0, want non-zero for unsupported python version")
 	}
-	for _, want := range []string{"unsupported python version", "3.12, 3.13, 3.14"} {
+	for _, want := range []string{"unsupported python version", "3.12, 3.13, 3.14, 3.15"} {
 		if !strings.Contains(se.String(), want) {
 			t.Errorf("stderr should mention %q, got:\n%s", want, se.String())
 		}
