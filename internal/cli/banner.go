@@ -9,7 +9,7 @@ import (
 // overridden at build time with:
 //
 //	go build -ldflags "-X codebox/internal/cli.version=<tag>" ./cmd/codebox
-var version = "0.1.1"
+var version = "0.1.2"
 
 // gitSHA returns the short (7-character) git revision the binary was
 // built from, or "" when the VCS stamp is unavailable — for example a
